@@ -291,14 +291,16 @@ Rules:
 1) Cover EVERY goal step — launch, navigate, assert, dismiss onboarding when needed.
 2) Map goals to: launchApp, openLink, tapOn, inputText, pressKey, scroll,
    scrollUntilVisible, swipe, assertVisible, waitForAnimationToEnd, stopApp.
-3) Prefer selectors from the view hierarchy when provided; else stable visible text.
-4) iOS Settings: com.apple.Preferences. Android Settings: com.android.settings.
-5) Mobile web (https://): openLink + Safari/Chrome appId. Never emit Playwright/Appium.
-6) Wikipedia: org.wikipedia (Android) / org.wikimedia.wikipedia (iOS).
-7) After launchApp, optionally dismiss Skip/Next/Continue/Allow/Not now.
-8) End the flow with stopApp.
-9) No markdown prose outside a ```yaml fence.
-10) Do NOT use evalScript/runScript — YAML commands only for this project."""
+3) Prefer selectors from exploration results / view hierarchy when provided;
+   else stable visible text.
+4) When exploration results include a grounded plan, follow that plan closely.
+5) iOS Settings: com.apple.Preferences. Android Settings: com.android.settings.
+6) Mobile web (https://): openLink + Safari/Chrome appId. Never emit Playwright/Appium.
+7) Wikipedia: org.wikipedia (Android) / org.wikimedia.wikipedia (iOS).
+8) After launchApp, optionally dismiss Skip/Next/Continue/Allow/Not now.
+9) End the flow with stopApp.
+10) No markdown prose outside a ```yaml fence.
+11) Do NOT use evalScript/runScript — YAML commands only for this project."""
 
 _MAESTRO_SYSTEM_JS = """You are a Maestro mobile test engineer with JavaScript support enabled.
 Emit a Maestro flow YAML and, when useful, companion JavaScript files.
@@ -314,13 +316,15 @@ Rules:
    - Prefer the global `output` object to share values across steps.
    - You may use console.log for debugging; no Node.js / filesystem APIs.
    - faker may be used for synthetic data when helpful.
-4) Prefer selectors from the view hierarchy when provided; else stable visible text.
-5) iOS Settings: com.apple.Preferences. Android Settings: com.android.settings.
-6) Mobile web (https://): openLink + Safari/Chrome appId. Never emit Playwright/Appium.
-7) Wikipedia: org.wikipedia (Android) / org.wikimedia.wikipedia (iOS).
-8) After launchApp, optionally dismiss Skip/Next/Continue/Allow/Not now.
-9) End the flow with stopApp.
-10) Output format — use fenced blocks:
+4) Prefer selectors from exploration results / view hierarchy when provided;
+   else stable visible text.
+5) When exploration results include a grounded plan, follow that plan closely.
+6) iOS Settings: com.apple.Preferences. Android Settings: com.android.settings.
+7) Mobile web (https://): openLink + Safari/Chrome appId. Never emit Playwright/Appium.
+8) Wikipedia: org.wikipedia (Android) / org.wikimedia.wikipedia (iOS).
+9) After launchApp, optionally dismiss Skip/Next/Continue/Allow/Not now.
+10) End the flow with stopApp.
+11) Output format — use fenced blocks:
     ```yaml flow.yaml
     ...
     ```
@@ -329,7 +333,6 @@ Rules:
     ```
     Only add .js files when the goal needs dynamic data, conditions, or HTTP helpers.
     Keep simple smoke flows YAML-only."""
-
 
 def parse_flow_bundle(text: str, *, app_id: str) -> FlowBundle:
     """Parse LLM (or paste) text into YAML + optional JS scripts."""
@@ -408,6 +411,7 @@ async def generate_flow_bundle(
     previous_yaml: str = "",
     previous_scripts: dict[str, str] | None = None,
     failure_log: str = "",
+    exploration: str = "",
     allow_js: bool = True,
     progress: ProgressFn = None,
 ) -> FlowBundle:
@@ -417,18 +421,29 @@ async def generate_flow_bundle(
         return parse_flow_bundle(goal, app_id=app_id)
 
     resolved = resolve_app_id(app_id, platform, goal)
-    # Deterministic shortcuts (YAML-only — no JS needed)
+    # Deterministic shortcuts (YAML-only — no JS needed) when no explore/repair context
     gl = goal.lower()
-    if "settings" in gl and ("open" in gl or "launch" in gl) and not previous_yaml:
+    if (
+        not exploration.strip()
+        and not previous_yaml
+        and "settings" in gl
+        and ("open" in gl or "launch" in gl)
+    ):
         return FlowBundle(flow_yaml=_settings_flow(platform))
-    if "wikipedia" in gl and ("open" in gl or "launch" in gl) and "search" not in gl:
-        if not previous_yaml:
-            return FlowBundle(flow_yaml=_wikipedia_open_flow(platform, resolved))
+    if (
+        not exploration.strip()
+        and not previous_yaml
+        and "wikipedia" in gl
+        and ("open" in gl or "launch" in gl)
+        and "search" not in gl
+    ):
+        return FlowBundle(flow_yaml=_wikipedia_open_flow(platform, resolved))
 
     if progress:
         progress(
             "Authoring Maestro YAML"
             + (" + JS" if allow_js else "")
+            + (" from exploration" if exploration.strip() else "")
             + " with LLM…"
         )
 
@@ -440,6 +455,8 @@ async def generate_flow_bundle(
         f"JavaScript enabled: {str(allow_js).lower()}",
         f"Goal:\n{goal}",
     ]
+    if exploration.strip():
+        user_parts.append(exploration.strip()[:12000])
     if previous_yaml.strip():
         user_parts.append(
             f"Previous flow YAML to repair:\n```yaml\n{previous_yaml.strip()}\n```"
@@ -497,6 +514,7 @@ async def generate_flow_yaml(
     hierarchy: str = "",
     previous_yaml: str = "",
     failure_log: str = "",
+    exploration: str = "",
     allow_js: bool = True,
     progress: ProgressFn = None,
 ) -> str:
@@ -509,6 +527,7 @@ async def generate_flow_yaml(
         hierarchy=hierarchy,
         previous_yaml=previous_yaml,
         failure_log=failure_log,
+        exploration=exploration,
         allow_js=allow_js,
         progress=progress,
     )
@@ -735,6 +754,8 @@ async def run_mobile_task(
     device_id: str | None = None,
     heal: int = 2,
     adaptive: bool = True,
+    explore: bool = True,
+    explore_steps: int = 5,
     timeout_s: int = 180,
     live: bool = True,
     allow_js: bool = True,
@@ -743,15 +764,16 @@ async def run_mobile_task(
     device_config: Any = None,
     artifact_dir: Path | None = None,
 ) -> dict[str, Any]:
-    """Full agent loop: status → author YAML(+JS) → run → optional heal."""
-    del discovery_profile  # reserved for future adaptive planner profile split
+    """Full agent loop: explore → author YAML(+JS) → run → optional heal."""
     from mobiflow.cloud.base import is_cloud_provider
     from mobiflow.devices import ensure_device
+    from mobiflow.explore import ExplorationResult, explore_app, plan_only_explore
 
     logs: list[str] = []
     run_root = Path(artifact_dir) if artifact_dir else None
     if run_root is not None:
         run_root.mkdir(parents=True, exist_ok=True)
+    discovery = discovery_profile or codegen_profile
 
     def _p(msg: str) -> None:
         logs.append(msg)
@@ -822,6 +844,14 @@ async def run_mobile_task(
         platform = infer_platform(selected, platform)
 
     scripts: dict[str, str] = {}
+    exploration = ExplorationResult(
+        goal=goal,
+        app_id=app_id,
+        platform=platform,
+        mode="skipped",
+    )
+    exploration_prompt = ""
+
     # Paste-to-run
     if looks_like_maestro_yaml(goal):
         bundle = parse_flow_bundle(goal, app_id=app_id)
@@ -829,18 +859,73 @@ async def run_mobile_task(
         scripts = bundle.scripts
         _p("Detected Maestro YAML — running as-is.")
     else:
-        hierarchy = ""
-        if live and adaptive and selected and status.get("installed") and not cloud:
+        # --- Explore phase (discovery LLM) before codegen ---
+        want_explore = bool(explore and discovery is not None)
+        if want_explore and live and selected and not cloud and status.get("installed"):
+            try:
+                exploration = await explore_app(
+                    goal,
+                    app_id=app_id,
+                    platform=platform,
+                    device_id=selected,
+                    profile=discovery,
+                    max_steps=explore_steps,
+                    step_timeout_s=min(90, max(30, timeout_s // 2)),
+                    progress=_p,
+                )
+            except Exception as e:  # noqa: BLE001
+                _p(f"Explore failed ({e}); falling back to hierarchy snapshot.")
+                exploration = ExplorationResult(
+                    goal=goal,
+                    app_id=app_id,
+                    platform=platform,
+                    mode="skipped",
+                    notes=[f"explore_error: {e}"],
+                )
+        elif want_explore:
+            # Cloud / no device: plan-only exploration from the goal text
+            try:
+                exploration = await plan_only_explore(
+                    goal=goal,
+                    app_id=app_id,
+                    platform=platform,
+                    profile=discovery,
+                    progress=_p,
+                )
+            except Exception as e:  # noqa: BLE001
+                _p(f"Plan-only explore failed ({e}); continuing without it.")
+
+        exploration_prompt = exploration.to_prompt_block()
+        if run_root is not None and exploration.mode != "skipped":
+            try:
+                (run_root / "exploration.json").write_text(
+                    json.dumps(exploration.to_dict(), indent=2) + "\n",
+                    encoding="utf-8",
+                )
+            except OSError:
+                pass
+
+        hierarchy = exploration.final_hierarchy or ""
+        if (
+            not hierarchy
+            and live
+            and adaptive
+            and selected
+            and status.get("installed")
+            and not cloud
+        ):
             _p("Fetching view hierarchy…")
             hierarchy = await fetch_hierarchy(selected)
-        elif cloud and adaptive:
+        elif cloud and adaptive and not exploration_prompt:
             _p("Skipping local hierarchy (cloud provider) — heal uses failure logs only.")
+
         bundle = await generate_flow_bundle(
             goal,
             app_id=app_id,
             platform=platform,
             profile=codegen_profile,
             hierarchy=hierarchy,
+            exploration=exploration_prompt,
             allow_js=allow_js,
             progress=_p,
         )
@@ -861,6 +946,7 @@ async def run_mobile_task(
         "logs": logs,
         "synthesis_only": False,
         "maestro_status": status,
+        "exploration": exploration.to_dict() if exploration.mode != "skipped" else None,
     }
 
     can_run = False
@@ -960,6 +1046,7 @@ async def run_mobile_task(
             previous_yaml=flow,
             previous_scripts=scripts,
             failure_log=failure,
+            exploration=exploration_prompt,
             allow_js=allow_js,
             progress=_p,
         )

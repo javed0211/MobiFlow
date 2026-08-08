@@ -166,7 +166,9 @@ class DeviceConfig(BaseModel):
 
 class RunConfig(BaseModel):
     heal: int = 2  # YAML repair attempts after failed run
-    adaptive: bool = True  # perceive→act loop when device is live
+    adaptive: bool = True  # hierarchy-aware heal / explore on live device
+    explore: bool = True  # explore app with discovery LLM before codegen
+    explore_steps: int = 5  # max live explore actions before codegen
     timeout_s: int = 180  # maestro test timeout
     save_artifacts: bool = True
     # Reporting: junit | html (comma-string or list). Empty / none disables.
@@ -179,6 +181,15 @@ class RunConfig(BaseModel):
         from mobiflow.reporting import normalize_report_formats
 
         return normalize_report_formats(v)
+
+    @field_validator("explore_steps")
+    @classmethod
+    def _clamp_explore_steps(cls, v: int) -> int:
+        try:
+            n = int(v)
+        except (TypeError, ValueError):
+            return 5
+        return max(1, min(n, 12))
 
 
 class ProjectConfig(BaseModel):
@@ -337,7 +348,9 @@ def render_simple_config(config: MobiflowConfig) -> str:
         "",
         "run:",
         f"  heal: {run.heal}          # YAML repair attempts (0 = off)",
-        f"  adaptive: {str(run.adaptive).lower()}   # perceive→act when device is live",
+        f"  adaptive: {str(run.adaptive).lower()}   # hierarchy-aware heal on live device",
+        f"  explore: {str(run.explore).lower()}    # discovery LLM explores app before codegen",
+        f"  explore_steps: {run.explore_steps}   # max live explore actions",
         f"  timeout_s: {run.timeout_s}",
         f"  save_artifacts: {str(run.save_artifacts).lower()}",
         f"  reports: [{', '.join(run.reports) if run.reports else ''}]   # junit, html — empty disables",

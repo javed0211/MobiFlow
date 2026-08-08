@@ -102,15 +102,40 @@ Notes:
 
 | Role | Config key | Used for |
 |------|------------|----------|
-| Discovery | `llm.discovery` | Reserved for adaptive plan / hierarchy-aware explore |
+| Discovery | `llm.discovery` | Explore app / build grounded plan before codegen |
 | Codegen | `llm.codegen` | Maestro YAML authoring + heal repairs |
 
 Both resolve from `llm.json`. They may be the same profile or different providers.
 
+## Explore-then-generate
+
+When `run.explore: true` (default), MobiFlow **explores first**, then authors YAML:
+
+```
+launch app → hierarchy → discovery LLM decides next tap/scroll
+        → repeat (≤ explore_steps) → grounded plan + selectors
+        → codegen writes YAML from exploration
+        → maestro test → heal on failure
+```
+
+```yaml
+run:
+  explore: true
+  explore_steps: 5
+```
+
+| Mode | When | Behavior |
+|------|------|----------|
+| Live local | device online | Multi-step navigate + observe via discovery LLM |
+| Cloud / no device | BrowserStack/TestMu or offline | Plan-only explore from the goal text |
+| Off | `explore: false` or pasted YAML | Skip explore; codegen from goal (+ one hierarchy if adaptive) |
+
+Exploration is saved to `.mobiflow/runs/<case>-<ts>/exploration.json`.
+
 ## Heal loop
 
 `run.heal` (default `2`) = number of repair attempts after a failed `maestro test`.
-Each repair sends previous YAML + failure log (+ optional hierarchy) to the codegen model.
+Each repair sends previous YAML + failure log (+ optional hierarchy) + exploration context to the codegen model.
 
 ## Gen-only
 

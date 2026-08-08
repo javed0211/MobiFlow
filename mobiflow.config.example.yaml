@@ -45,7 +45,9 @@ device:
 
 run:
   heal: 2                      # YAML repair attempts (0 = off)
-  adaptive: true               # use view hierarchy when device is live (local)
+  adaptive: true               # hierarchy-aware heal on live device
+  explore: true                # discovery LLM explores app before codegen
+  explore_steps: 5             # max live explore actions
   timeout_s: 180
   save_artifacts: true
   reports: [junit, html]       # junit, html — set [] to disable

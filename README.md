@@ -161,11 +161,12 @@ export BROWSERSTACK_USERNAME=... BROWSERSTACK_ACCESS_KEY=...
 
 ```
 1. Load case + config (llm.json profiles)
-2. Author Maestro YAML (+ JS when enabled)
-3. Local: maestro test --device <id>
+2. Explore app with discovery LLM (hierarchy → navigate → plan)
+3. Author Maestro YAML from exploration (+ JS when enabled)
+4. Local: maestro test --device <id>
    Cloud: upload app + suite → BrowserStack / TestMu HyperExecute
-4. On fail → repair with failure log (≤ run.heal) → re-run
-5. Write flows/<case>.yaml (+ scripts) + .mobiflow/runs/
+5. On fail → repair with failure log (≤ run.heal) → re-run
+6. Write flows/<case>.yaml (+ scripts) + reports under .mobiflow/
 ```
 
 ## Relation to test-agent-nexus Mobile Agent
