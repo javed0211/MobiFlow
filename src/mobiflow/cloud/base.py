@@ -152,8 +152,18 @@ class CloudRunResult:
     stderr: str = ""
     error: str | None = None
     raw: dict[str, Any] = field(default_factory=dict)
+    media_urls: list[dict[str, str]] = field(default_factory=list)
+    media_files: list[str] = field(default_factory=list)
+    media_dir: str = ""
+    video_url: str = ""
 
     def as_run_dict(self) -> dict[str, Any]:
+        video = self.video_url
+        if not video:
+            for item in self.media_urls:
+                if item.get("kind") == "video" and item.get("url"):
+                    video = item["url"]
+                    break
         return {
             "ok": self.ok,
             "returncode": 0 if self.ok else 1,
@@ -167,6 +177,10 @@ class CloudRunResult:
             "app_url": self.app_url,
             "test_suite_url": self.test_suite_url,
             "raw": self.raw,
+            "media_urls": self.media_urls,
+            "media_files": self.media_files,
+            "media_dir": self.media_dir,
+            "video_url": video,
         }
 
 

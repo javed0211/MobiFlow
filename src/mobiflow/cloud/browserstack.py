@@ -119,6 +119,7 @@ async def start_build(
         "project": project or "MobiFlow",
         "execute": execute,
         "deviceLogs": True,
+        "debugscreenshots": True,
     }
     if build_name:
         body["customBuildName"] = build_name
@@ -191,6 +192,7 @@ async def run_browserstack(
     request: CloudRunRequest,
     *,
     progress: ProgressFn = None,
+    artifact_dir: Path | None = None,
 ) -> CloudRunResult:
     creds = resolve_credentials(
         request.provider,
@@ -283,6 +285,32 @@ async def run_browserstack(
         },
         indent=2,
     )
+    media_urls: list[dict[str, str]] = []
+    media_files: list[str] = []
+    media_dir = ""
+    video_url = ""
+    if artifact_dir is not None and build_id:
+        try:
+            from mobiflow.cloud.media import pull_browserstack_media
+
+            media_dest = Path(artifact_dir) / "cloud"
+            media_index = await pull_browserstack_media(
+                creds,
+                build_id,
+                final,
+                media_dest,
+                progress=progress,
+            )
+            media_urls = list(media_index.get("urls") or [])
+            media_files = list(media_index.get("files") or [])
+            media_dir = str(media_dest)
+            for item in media_urls:
+                if item.get("kind") == "video":
+                    video_url = item.get("url") or ""
+                    break
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("BrowserStack media pull failed: %s", exc)
+
     return CloudRunResult(
         ok=ok,
         provider="browserstack",
@@ -295,4 +323,8 @@ async def run_browserstack(
         stderr="" if ok else summary,
         error=err,
         raw=final,
+        media_urls=media_urls,
+        media_files=media_files,
+        media_dir=media_dir,
+        video_url=video_url,
     )

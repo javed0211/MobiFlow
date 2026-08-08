@@ -37,6 +37,7 @@ class ReportCase:
     screenshot_paths: list[str] = field(default_factory=list)
     artifact_dir: str = ""
     started_at: str = ""
+    video_url: str = ""
 
 
 def normalize_report_formats(value: Any) -> list[str]:
@@ -219,6 +220,9 @@ def write_html_report(case: ReportCase, path: Path) -> Path:
     if case.dashboard_url:
         url = html.escape(case.dashboard_url)
         dash_link = f'<p><a href="{url}">Open cloud dashboard</a></p>'
+    if case.video_url:
+        vurl = html.escape(case.video_url)
+        dash_link += f'<p><a href="{vurl}">Open session video</a></p>'
 
     progress_block = block("Progress log", "\n".join(case.logs))
     stdout_block = block("Stdout", case.stdout)

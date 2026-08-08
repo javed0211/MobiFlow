@@ -123,8 +123,11 @@ task: Open Wikipedia, dismiss onboarding, confirm Search is visible
 | `mobiflow run cases/ [--tag smoke]` | Suite: all (or tagged) cases + aggregate JUnit/HTML |
 | `mobiflow suite [cases/]` | Same as `run` on a directory (defaults to `cases/`) |
 | `mobiflow run <case.txt> --gen-only` | Author YAML only |
+| `mobiflow run … --reuse-flow` | Skip LLM; use frozen `flows/<case>.yaml` |
 | `mobiflow gen "Open Settings…"` | One-shot NL → YAML |
 | `mobiflow explore "…" [--interactive]` | Discovery session (confirm each action with `--interactive`) |
+| `mobiflow import-flow flow.yaml` | Studio/YAML → MobiFlow case (+ copy into `flows/`) |
+| `mobiflow baseline update/compare` | Visual PNG baseline |
 | `mobiflow studio` | Open Maestro Studio (local device UI) |
 | `mobiflow test-flow flows/foo.yaml` | Run existing YAML |
 | `mobiflow status` / `devices` | Maestro + local devices + cloud lab readiness |

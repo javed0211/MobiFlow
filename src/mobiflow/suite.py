@@ -1,10 +1,11 @@
-"""Suite runner: discover cases, execute sequentially, aggregate reports."""
+"""Suite runner: discover cases, execute (optionally parallel), aggregate reports."""
 
 from __future__ import annotations
 
 import json
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -107,6 +108,7 @@ def _result_to_report_case(
         screenshot_paths=list(result.get("screenshots") or []),
         artifact_dir=str(result.get("artifact_dir") or ""),
         started_at=started_at,
+        video_url=str(run_meta.get("video_url") or ""),
     )
 
 
@@ -138,19 +140,22 @@ def run_suite(
         )
         return result
 
+    jobs = max(1, int(cfg.run.jobs or 1))
+    if jobs > 1 and stop_on_fail:
+        console.print(
+            "[yellow]fail_fast is ignored when run.jobs > 1 "
+            "(all in-flight cases finish).[/yellow]"
+        )
     console.print(
         f"[bold]Suite[/bold] {name}  cases={len(cases)}  "
         f"tags={','.join(tags) if tags else '(any)'}  "
-        f"fail_fast={str(stop_on_fail).lower()}"
+        f"fail_fast={str(stop_on_fail).lower()}  jobs={jobs}"
     )
 
     t0 = time.monotonic()
     provider = cfg.device.provider or "local"
-    for i, case in enumerate(cases, 1):
-        console.print(
-            f"\n[bold cyan][{i}/{len(cases)}][/bold cyan] {case.name}"
-            + (f"  @{'/'.join(case.tags)}" if case.tags else "")
-        )
+
+    def _run_one(case: TestCase) -> ReportCase:
         case_started = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
         case_t0 = time.monotonic()
         try:
@@ -174,10 +179,9 @@ def run_suite(
                 "logs": [],
             }
         case_dur = time.monotonic() - case_t0
-        # Prefer paths from pipeline payload when present
         if not raw.get("flow_path") and raw.get("flow_yaml"):
             raw["flow_path"] = str(cfg.flow_dir_path() / f"{case.name}.yaml")
-        report_case = _result_to_report_case(
+        return _result_to_report_case(
             case,
             raw,
             provider=provider,
@@ -186,10 +190,34 @@ def run_suite(
             duration_s=case_dur,
             started_at=case_started,
         )
-        result.cases.append(report_case)
-        if stop_on_fail and not report_case.success:
-            console.print("[yellow]fail_fast: stopping suite[/yellow]")
-            break
+
+    if jobs == 1:
+        for i, case in enumerate(cases, 1):
+            console.print(
+                f"\n[bold cyan][{i}/{len(cases)}][/bold cyan] {case.name}"
+                + (f"  @{'/'.join(case.tags)}" if case.tags else "")
+            )
+            report_case = _run_one(case)
+            result.cases.append(report_case)
+            if stop_on_fail and not report_case.success:
+                console.print("[yellow]fail_fast: stopping suite[/yellow]")
+                break
+    else:
+        console.print(f"[dim]Running up to {jobs} cases in parallel…[/dim]")
+        ordered: list[ReportCase | None] = [None] * len(cases)
+        with ThreadPoolExecutor(max_workers=jobs) as pool:
+            futures = {
+                pool.submit(_run_one, case): idx for idx, case in enumerate(cases)
+            }
+            for fut in as_completed(futures):
+                idx = futures[fut]
+                report_case = fut.result()
+                ordered[idx] = report_case
+                flag = "OK" if report_case.success else "FAIL"
+                console.print(
+                    f"  [{flag}] {report_case.name} ({report_case.duration_s:.1f}s)"
+                )
+        result.cases = [c for c in ordered if c is not None]
 
     result.duration_s = time.monotonic() - t0
 

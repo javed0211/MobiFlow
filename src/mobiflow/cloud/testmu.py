@@ -174,6 +174,7 @@ async def run_testmu(
     request: CloudRunRequest,
     *,
     progress: ProgressFn = None,
+    artifact_dir: Path | None = None,
 ) -> CloudRunResult:
     creds = resolve_credentials(
         CloudProvider.TESTMU,
@@ -333,6 +334,32 @@ async def run_testmu(
                 f"TestMu HyperExecute finished rc={code}"
                 + (f" · {dash}" if dash else "")
             )
+        media_urls: list[dict[str, str]] = []
+        media_files: list[str] = []
+        media_dir = ""
+        video_url = ""
+        if artifact_dir is not None:
+            try:
+                from mobiflow.cloud.media import pull_testmu_media
+
+                media_dest = Path(artifact_dir) / "cloud"
+                media_index = await pull_testmu_media(
+                    stdout,
+                    stderr,
+                    media_dest,
+                    creds=creds,
+                    progress=progress,
+                )
+                media_urls = list(media_index.get("urls") or [])
+                media_files = list(media_index.get("files") or [])
+                media_dir = str(media_dest)
+                for item in media_urls:
+                    if item.get("kind") == "video":
+                        video_url = item.get("url") or ""
+                        break
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("TestMu media pull failed: %s", exc)
+
         return CloudRunResult(
             ok=ok,
             provider="testmu",
@@ -344,4 +371,8 @@ async def run_testmu(
             stderr=stderr,
             error=None if ok else "hyperexecute_failed",
             raw={"returncode": code, "hyperexecute_yaml": he_yaml},
+            media_urls=media_urls,
+            media_files=media_files,
+            media_dir=media_dir,
+            video_url=video_url,
         )

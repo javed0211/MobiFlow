@@ -408,6 +408,12 @@ def devices_cmd(
     default=None,
     help="Suite only: stop after first failure (default: run.fail_fast)",
 )
+@click.option(
+    "--jobs",
+    default=None,
+    type=int,
+    help="Suite only: parallel case workers (default: run.jobs)",
+)
 def run_cmd(
     case_path: str,
     repo: str | None,
@@ -417,6 +423,7 @@ def run_cmd(
     reuse_flow: bool | None,
     tags: tuple[str, ...],
     fail_fast: bool | None,
+    jobs: int | None,
 ) -> None:
     """Run a case file, or a directory of cases as a suite.
 
@@ -432,6 +439,8 @@ def run_cmd(
     _print_warnings(cfg)
     path = Path(case_path)
     if path.is_dir():
+        if jobs is not None:
+            cfg.run.jobs = max(1, min(int(jobs), 32))
         suite = run_suite(
             path,
             cfg,
@@ -490,6 +499,12 @@ def run_cmd(
     default=None,
     help="Stop after first failure (default: run.fail_fast)",
 )
+@click.option(
+    "--jobs",
+    default=None,
+    type=int,
+    help="Parallel case workers (default: run.jobs)",
+)
 def suite_cmd(
     cases_path: str | None,
     repo: str | None,
@@ -499,6 +514,7 @@ def suite_cmd(
     reuse_flow: bool | None,
     tags: tuple[str, ...],
     fail_fast: bool | None,
+    jobs: int | None,
 ) -> None:
     """Run a suite of cases and write aggregate JUnit/HTML reports.
 
@@ -509,6 +525,8 @@ def suite_cmd(
 
     cfg = _load_config_or_exit(repo)
     _print_warnings(cfg)
+    if jobs is not None:
+        cfg.run.jobs = max(1, min(int(jobs), 32))
     target = Path(cases_path) if cases_path else cfg.cases_dir_path()
     if not target.exists():
         console.print(f"[red]Cases path not found:[/red] {target}")
@@ -774,6 +792,137 @@ def explore_cmd(
     else:
         console.print("\n[bold]Generated flow[/bold]\n")
         console.print(bundle.flow_yaml)
+
+
+@main.command("import-flow")
+@click.argument("flow_file", type=click.Path(exists=True, dir_okay=False))
+@click.option("--repo", default=None, help="Project path")
+@click.option(
+    "--case",
+    "case_out",
+    default=None,
+    type=click.Path(dir_okay=False),
+    help="Write case file here (default: cases/<stem>.txt)",
+)
+@click.option("--tag", "tags", multiple=True, help="Add @tag to the case (repeatable)")
+@click.option(
+    "--copy-flow/--no-copy-flow",
+    default=True,
+    help="Copy YAML into flows/ and set flow: meta (default: on)",
+)
+def import_flow_cmd(
+    flow_file: str,
+    repo: str | None,
+    case_out: str | None,
+    tags: tuple[str, ...],
+    copy_flow: bool,
+) -> None:
+    """Turn a Maestro YAML (e.g. Studio export) into a MobiFlow case.
+
+    The case uses paste-YAML / reuse-flow so ``mobiflow run`` executes it
+    without LLM authoring.
+    """
+    import re
+
+    from mobiflow.maestro import looks_like_maestro_yaml
+
+    cfg = _load_config_or_exit(repo)
+    src = Path(flow_file).expanduser().resolve()
+    text = src.read_text(encoding="utf-8")
+    if not looks_like_maestro_yaml(text):
+        console.print("[red]File does not look like Maestro YAML.[/red]")
+        sys.exit(1)
+
+    app_id = ""
+    platform = cfg.device.platform or "android"
+    m = re.search(r"(?m)^appId:\s*(\S+)", text)
+    if m:
+        app_id = m.group(1).strip().strip("\"'")
+
+    flow_rel = ""
+    if copy_flow:
+        dest = cfg.flow_dir_path() / src.name
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(text, encoding="utf-8")
+        try:
+            flow_rel = str(dest.relative_to(cfg.repo_path()))
+        except ValueError:
+            flow_rel = str(dest)
+        console.print(f"[green]Copied flow[/green] → {dest}")
+
+    case_path = (
+        Path(case_out).expanduser().resolve()
+        if case_out
+        else cfg.cases_dir_path() / f"{src.stem}.txt"
+    )
+    case_path.parent.mkdir(parents=True, exist_ok=True)
+    lines = ["# Imported from Maestro YAML / Studio export", ""]
+    for tag in tags:
+        lines.append(f"@{tag.lstrip('@')}")
+    if app_id:
+        lines.append(f"appId: {app_id}")
+    lines.append(f"platform: {platform}")
+    if flow_rel:
+        lines.append(f"flow: {flow_rel}")
+    lines.append(f"task: Run imported Maestro flow {src.name}")
+    # Embed YAML so paste-to-run works even without reuse-flow
+    if not flow_rel:
+        lines.append("")
+        lines.append(text.rstrip())
+    case_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    console.print(f"[green]Wrote case[/green] → {case_path}")
+    console.print(
+        f"[dim]Run with:[/dim] mobiflow run {case_path}"
+        + (" --reuse-flow" if flow_rel else "")
+    )
+
+
+@main.group("baseline")
+def baseline_group() -> None:
+    """Manage visual screenshot baselines."""
+
+
+@baseline_group.command("update")
+@click.argument("case_name")
+@click.argument("image", type=click.Path(exists=True, dir_okay=False))
+@click.option("--repo", default=None, help="Project path")
+def baseline_update_cmd(case_name: str, image: str, repo: str | None) -> None:
+    """Save ``image`` as the baseline PNG for ``case_name``."""
+    from mobiflow.baseline import update_baseline
+
+    cfg = _load_config_or_exit(repo)
+    dest = update_baseline(case_name, Path(image), cfg.artifacts_dir())
+    console.print(f"[green]Baseline updated[/green] → {dest}")
+
+
+@baseline_group.command("compare")
+@click.argument("case_name")
+@click.argument("image", type=click.Path(exists=True, dir_okay=False))
+@click.option("--repo", default=None, help="Project path")
+@click.option("--threshold", default=0.02, type=float, help="Max mismatch ratio")
+def baseline_compare_cmd(
+    case_name: str, image: str, repo: str | None, threshold: float
+) -> None:
+    """Compare a screenshot to the stored baseline."""
+    from mobiflow.baseline import compare_case_screenshot
+
+    cfg = _load_config_or_exit(repo)
+    result = compare_case_screenshot(
+        case_name,
+        Path(image),
+        cfg.artifacts_dir(),
+        threshold=threshold,
+    )
+    if result.ok:
+        console.print(
+            f"[green]PASS[/green] {case_name} mismatch={result.mismatch_ratio:.3%}"
+        )
+    else:
+        console.print(
+            f"[red]FAIL[/red] {case_name}: {result.message}"
+            + (f"\n  diff → {result.diff_path}" if result.diff_path else "")
+        )
+        sys.exit(1)
 
 
 @main.command("studio")

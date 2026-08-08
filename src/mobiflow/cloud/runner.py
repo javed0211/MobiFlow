@@ -125,11 +125,16 @@ async def run_on_cloud(
     request: CloudRunRequest,
     *,
     progress: ProgressFn = None,
+    artifact_dir: Any = None,
 ) -> CloudRunResult:
     if request.provider == CloudProvider.BROWSERSTACK:
-        return await run_browserstack(request, progress=progress)
+        return await run_browserstack(
+            request, progress=progress, artifact_dir=artifact_dir
+        )
     if request.provider == CloudProvider.TESTMU:
-        return await run_testmu(request, progress=progress)
+        return await run_testmu(
+            request, progress=progress, artifact_dir=artifact_dir
+        )
     return CloudRunResult(
         ok=False,
         provider=str(request.provider),

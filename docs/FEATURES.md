@@ -205,7 +205,23 @@ mobiflow suite cases/ --fail-fast
 | `run.jobs` | Reserved for parallel suites (currently sequential) |
 | `run.retries` | Re-run same YAML before each heal (flake control) |
 | `run.reuse_flow` / `--reuse-flow` | Skip LLM; use `flows/<case>.yaml` or case `flow:` |
-| `run.env` | Reserved for Maestro `--env` injection |
+| `run.env` / case `env:` | Maestro `--env KEY=VALUE` (values can be env var names) |
+| `run.jobs` / `--jobs N` | Parallel suite workers |
+| case `expect:` | Force `assertVisible` lines into generated/reused YAML |
+
+Cloud runs download screenshots/video/logs into `.mobiflow/runs/.../cloud/` when
+APIs expose them (BrowserStack sessions; TestMu best-effort from CLI URLs).
+HTML reports link `video_url` and embed pulled screenshots.
+
+Selector memory persists under `.mobiflow/selectors/<appId>.json` and feeds
+codegen prompts on later runs.
+
+```bash
+mobiflow import-flow studio-export.yaml --tag smoke
+mobiflow baseline update example shot.png
+mobiflow baseline compare example shot.png
+mobiflow suite --jobs 2 --reuse-flow
+```
 
 Outputs under `.mobiflow/reports/suite-<name>-<ts>/`:
 

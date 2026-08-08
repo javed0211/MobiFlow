@@ -298,6 +298,7 @@ Rules:
 6) Mobile web (https://): openLink + Safari/Chrome appId. Never emit Playwright/Appium.
 7) Wikipedia: org.wikipedia (Android) / org.wikimedia.wikipedia (iOS).
 8) After launchApp, optionally dismiss Skip/Next/Continue/Allow/Not now.
+8b) Always end happy-path flows with assertVisible (goal evidence); prefer known selectors.
 9) End the flow with stopApp.
 10) No markdown prose outside a ```yaml fence.
 11) Do NOT use evalScript/runScript — YAML commands only for this project."""
@@ -323,6 +324,7 @@ Rules:
 7) Mobile web (https://): openLink + Safari/Chrome appId. Never emit Playwright/Appium.
 8) Wikipedia: org.wikipedia (Android) / org.wikimedia.wikipedia (iOS).
 9) After launchApp, optionally dismiss Skip/Next/Continue/Allow/Not now.
+9b) Always end happy-path flows with assertVisible (goal evidence); prefer known selectors.
 10) End the flow with stopApp.
 11) Output format — use fenced blocks:
     ```yaml flow.yaml
@@ -581,10 +583,15 @@ def _maestro_test_args(
     *,
     device_id: str | None = None,
     artifact_dir: Path | None = None,
+    flow_env: dict[str, str] | None = None,
 ) -> list[str]:
+    from mobiflow.secrets import maestro_env_args
+
     args = [binary, "test", str(flow_path)]
     if device_id:
         args.extend(["--device", device_id])
+    if flow_env:
+        args.extend(maestro_env_args(flow_env))
     if artifact_dir is not None:
         artifact_dir.mkdir(parents=True, exist_ok=True)
         debug_dir = artifact_dir / "maestro-debug"
@@ -619,6 +626,7 @@ async def run_flow_yaml(
     device_config: Any = None,
     platform: str | None = None,
     artifact_dir: Path | None = None,
+    flow_env: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Run Maestro YAML locally or on a cloud device lab.
 
@@ -650,7 +658,9 @@ async def run_flow_yaml(
                 timeout_s, int(getattr(device_config, "cloud_timeout_s", 1800) or 1800)
             ),
         )
-        cloud_result = await run_on_cloud(req, progress=progress)
+        cloud_result = await run_on_cloud(
+            req, progress=progress, artifact_dir=artifact_dir
+        )
         out = cloud_result.as_run_dict()
         out["flow_yaml"] = flow_yaml
         out["scripts"] = scripts or {}
@@ -663,6 +673,9 @@ async def run_flow_yaml(
                         "build_id": out.get("build_id"),
                         "status": out.get("status"),
                         "dashboard_url": out.get("dashboard_url"),
+                        "video_url": out.get("video_url"),
+                        "media_files": out.get("media_files"),
+                        "media_dir": out.get("media_dir"),
                         "ok": out.get("ok"),
                     },
                     indent=2,
@@ -671,6 +684,24 @@ async def run_flow_yaml(
                 encoding="utf-8",
             )
             out["artifact_dir"] = str(artifact_dir)
+            # Mirror downloaded cloud screenshots into screenshots/ for reports
+            media_dir = Path(out["media_dir"]) if out.get("media_dir") else (
+                artifact_dir / "cloud"
+            )
+            if media_dir.is_dir():
+                shots = artifact_dir / "screenshots"
+                for src in sorted(media_dir.iterdir()):
+                    if src.is_file() and src.suffix.lower() in {
+                        ".png",
+                        ".jpg",
+                        ".jpeg",
+                        ".webp",
+                        ".gif",
+                    }:
+                        shots.mkdir(parents=True, exist_ok=True)
+                        dest = shots / src.name
+                        if not dest.exists():
+                            dest.write_bytes(src.read_bytes())
         return out
 
     binary = resolve_maestro_binary()
@@ -714,7 +745,11 @@ async def run_flow_yaml(
         work_dir.mkdir(parents=True, exist_ok=True)
         flow_path = _write_bundle(work_dir)
         args = _maestro_test_args(
-            binary, flow_path, device_id=device_id, artifact_dir=artifact_dir
+            binary,
+            flow_path,
+            device_id=device_id,
+            artifact_dir=artifact_dir,
+            flow_env=flow_env,
         )
         if progress:
             progress(f"Running maestro test{' on ' + device_id if device_id else ''}…")
@@ -727,7 +762,11 @@ async def run_flow_yaml(
         root.mkdir(parents=True, exist_ok=True)
         flow_path = _write_bundle(root)
         args = _maestro_test_args(
-            binary, flow_path, device_id=device_id, artifact_dir=artifact_dir
+            binary,
+            flow_path,
+            device_id=device_id,
+            artifact_dir=artifact_dir,
+            flow_env=flow_env,
         )
         if progress:
             progress(f"Running maestro test{' on ' + device_id if device_id else ''}…")
@@ -737,7 +776,9 @@ async def run_flow_yaml(
     with tempfile.TemporaryDirectory(prefix="mobiflow-") as tmp:
         root = Path(tmp)
         flow_path = _write_bundle(root)
-        args = _maestro_test_args(binary, flow_path, device_id=device_id)
+        args = _maestro_test_args(
+            binary, flow_path, device_id=device_id, flow_env=flow_env
+        )
         if progress:
             progress(f"Running maestro test{' on ' + device_id if device_id else ''}…")
         result = await _run_cmd(args, timeout=float(timeout_s), cwd=str(root))
@@ -769,11 +810,14 @@ async def run_mobile_task(
     retries: int = 0,
     reuse_flow_yaml: str | None = None,
     reuse_scripts: dict[str, str] | None = None,
+    flow_env: dict[str, str] | None = None,
+    expect: list[str] | None = None,
 ) -> dict[str, Any]:
     """Full agent loop: preflight → explore → author YAML(+JS) → run → heal.
 
     ``retries`` re-runs the same YAML before each heal. ``reuse_flow_yaml``
     skips explore/codegen and executes the provided flow (optionally with heal).
+    ``flow_env`` is passed to Maestro as ``--env KEY=VALUE``.
     """
     from mobiflow.cloud.base import is_cloud_provider
     from mobiflow.devices import ensure_device
@@ -899,6 +943,33 @@ async def run_mobile_task(
     )
     exploration_prompt = ""
     max_retries = max(0, min(int(retries or 0), 10))
+    from mobiflow.selectors import (
+        ensure_expect_asserts,
+        load_selector_memory,
+        memory_to_prompt_block,
+        merge_selectors,
+        save_selector_memory,
+    )
+
+    resolved_app = resolve_app_id(app_id, platform, goal)
+    # run_root = .mobiflow/runs/<case-ts> → artifacts root = .mobiflow
+    art_root = run_root.parent.parent if run_root is not None else None
+    selector_memory: dict[str, Any] = (
+        load_selector_memory(art_root, resolved_app) if art_root is not None else {}
+    )
+    mem_block = memory_to_prompt_block(selector_memory)
+
+    def _persist_selectors(success: bool) -> None:
+        if art_root is None:
+            return
+        sels = list(exploration.selectors or [])
+        if not sels and not selector_memory:
+            return
+        updated = merge_selectors(selector_memory, sels, success=success)
+        try:
+            save_selector_memory(art_root, resolved_app, updated)
+        except OSError:
+            pass
 
     # Frozen / reused flow — skip explore + codegen
     if reuse_flow_yaml and looks_like_maestro_yaml(reuse_flow_yaml):
@@ -950,6 +1021,12 @@ async def run_mobile_task(
                 _p(f"Plan-only explore failed ({e}); continuing without it.")
 
         exploration_prompt = exploration.to_prompt_block()
+        if mem_block:
+            exploration_prompt = (
+                (exploration_prompt + "\n\n" + mem_block).strip()
+                if exploration_prompt
+                else mem_block
+            )
         if run_root is not None and exploration.mode != "skipped":
             try:
                 (run_root / "exploration.json").write_text(
@@ -986,6 +1063,8 @@ async def run_mobile_task(
         flow = bundle.flow_yaml
         scripts = bundle.scripts
 
+    if expect:
+        flow = ensure_expect_asserts(flow, list(expect))
     if scripts:
         _p(f"Maestro bundle ready ({len(scripts)} JS file(s)).")
     else:
@@ -1053,6 +1132,7 @@ async def run_mobile_task(
                 device_config=device_config,
                 platform=platform,
                 artifact_dir=attempt_dir,
+                flow_env=flow_env,
             )
             attempts_meta.append(
                 {
@@ -1094,12 +1174,19 @@ async def run_mobile_task(
                     "maestro_junit",
                     "maestro_debug_dir",
                     "maestro_output_dir",
+                    "video_url",
+                    "media_files",
+                    "media_dir",
+                    "media_urls",
                 )
                 if k in last_run
             }
             _p(result["summary"])
             if last_run.get("dashboard_url"):
                 _p(f"Dashboard: {last_run['dashboard_url']}")
+            if last_run.get("video_url"):
+                _p(f"Video: {last_run['video_url']}")
+            _persist_selectors(True)
             return result
 
         if heal_round >= heal_budget:
@@ -1145,8 +1232,13 @@ async def run_mobile_task(
             "maestro_junit",
             "maestro_debug_dir",
             "maestro_output_dir",
+            "video_url",
+            "media_files",
+            "media_dir",
+            "media_urls",
         )
         if k in last_run
     }
     _p(result["summary"])
+    _persist_selectors(False)
     return result

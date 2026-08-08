@@ -129,6 +129,12 @@ def run_pipeline(
             f"{cfg.flow_dir_path() / (case.name + '.yaml')} — generating[/yellow]"
         )
 
+    from mobiflow.secrets import merge_flow_env, redact_text
+
+    flow_env = merge_flow_env(cfg.run.env, case.env)
+    if flow_env:
+        console.print(f"  env keys: {', '.join(sorted(flow_env))}")
+
     import asyncio
 
     run_timeout = max(cfg.run.timeout_s, cfg.device.boot_timeout_s)
@@ -168,6 +174,8 @@ def run_pipeline(
             retries=0 if gen_only else cfg.run.retries,
             reuse_flow_yaml=reuse_yaml,
             reuse_scripts=reuse_scripts or None,
+            flow_env=flow_env or None,
+            expect=list(case.expect or []),
         )
     )
     duration_s = time.monotonic() - t0
@@ -242,13 +250,14 @@ def run_pipeline(
             flow_path=str(out_flow) if flow_yaml else "",
             dashboard_url=str(run_meta.get("dashboard_url") or ""),
             build_id=str(run_meta.get("build_id") or ""),
-            stdout=str(run_meta.get("stdout") or ""),
-            stderr=str(run_meta.get("stderr") or ""),
-            logs=list(result.get("logs") or []),
+            stdout=redact_text(str(run_meta.get("stdout") or ""), flow_env),
+            stderr=redact_text(str(run_meta.get("stderr") or ""), flow_env),
+            logs=[redact_text(str(x), flow_env) for x in (result.get("logs") or [])],
             synthesis_only=bool(result.get("synthesis_only")),
             screenshot_paths=screenshot_rels,
             artifact_dir=str(run_artifact_dir),
             started_at=started_at,
+            video_url=str(run_meta.get("video_url") or ""),
         )
         maestro_junit = None
         if run_meta.get("maestro_junit"):
