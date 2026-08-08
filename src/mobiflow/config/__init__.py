@@ -180,6 +180,8 @@ class RunConfig(BaseModel):
     fail_fast: bool = False  # suite: stop after first failing case
     jobs: int = 1  # suite parallelism (1 = sequential)
     env: dict[str, str] = Field(default_factory=dict)  # Maestro --env KEY=VALUE
+    # Lifecycle: install (local adb/simctl) and/or clear (Maestro clearState)
+    preflight: list[str] = Field(default_factory=list)
 
     @field_validator("reports", mode="before")
     @classmethod
@@ -187,6 +189,13 @@ class RunConfig(BaseModel):
         from mobiflow.reporting import normalize_report_formats
 
         return normalize_report_formats(v)
+
+    @field_validator("preflight", mode="before")
+    @classmethod
+    def _coerce_preflight(cls, v: Any) -> list[str]:
+        from mobiflow.maestro.lifecycle import normalize_preflight
+
+        return normalize_preflight(v)
 
     @field_validator("explore_steps")
     @classmethod
@@ -398,6 +407,7 @@ def render_simple_config(config: MobiflowConfig) -> str:
         f"  reuse_flow: {str(run.reuse_flow).lower()}  # use flows/<case>.yaml instead of LLM",
         f"  fail_fast: {str(run.fail_fast).lower()}   # suite: stop on first failure",
         f"  jobs: {run.jobs}           # suite parallelism (1 = sequential)",
+        f"  preflight: [{', '.join(run.preflight) if run.preflight else ''}]   # install, clear",
         "",
         "# Edit llm.json to add Azure / OpenAI / Anthropic / Google models.",
         "# Then change discovery: / codegen: above to the profile ids you want.",

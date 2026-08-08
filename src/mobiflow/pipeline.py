@@ -109,6 +109,9 @@ def run_pipeline(
             progress=progress,
             device_config=cfg.device,
             artifact_dir=run_artifact_dir,
+            clear_state=bool(case.clear_state),
+            preflight=list(cfg.run.preflight or []),
+            app_path=cfg.device.app_path or "",
         )
     )
     duration_s = time.monotonic() - t0

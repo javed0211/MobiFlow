@@ -162,6 +162,32 @@ It does **not** launch Maestro Studio — that is `mobiflow studio`.
 `run.heal` (default `2`) = number of repair attempts after a failed `maestro test`.
 Each repair sends previous YAML + failure log (+ optional hierarchy) + exploration context to the codegen model.
 
+## App lifecycle (preflight)
+
+Before explore/run on a **local** device, MobiFlow can install a package and/or
+clear app state:
+
+```yaml
+device:
+  app_path: builds/app-debug.apk   # used by preflight install + cloud upload
+run:
+  preflight: [install, clear]      # or just [clear]
+```
+
+Case-level override:
+
+```text
+@smoke
+appId: com.example.app
+clearState: true
+task: …
+```
+
+| Step | Local | Cloud |
+|------|-------|-------|
+| `install` | `adb install -r` (Android) / `simctl install` (`.app`) | Upload via `device.app_path` (existing) |
+| `clear` | Maestro `clearState` (+ `clearKeychain` on iOS) | Skipped (use lab fresh device / reinstall) |
+
 ## Suite runner
 
 Run a directory of cases and get one aggregate report:

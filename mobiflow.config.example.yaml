@@ -56,3 +56,4 @@ run:
   reuse_flow: false            # use flows/<case>.yaml instead of LLM
   fail_fast: false             # suite: stop on first failure
   jobs: 1                      # suite parallelism (1 = sequential)
+  preflight: []                # install, clear — local lifecycle before explore/run

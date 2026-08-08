@@ -763,17 +763,22 @@ async def run_mobile_task(
     progress: ProgressFn = None,
     device_config: Any = None,
     artifact_dir: Path | None = None,
+    clear_state: bool = False,
+    preflight: list[str] | None = None,
+    app_path: str = "",
 ) -> dict[str, Any]:
-    """Full agent loop: explore → author YAML(+JS) → run → optional heal."""
+    """Full agent loop: preflight → explore → author YAML(+JS) → run → heal."""
     from mobiflow.cloud.base import is_cloud_provider
     from mobiflow.devices import ensure_device
     from mobiflow.explore import ExplorationResult, explore_app, plan_only_explore
+    from mobiflow.maestro.lifecycle import normalize_preflight, run_preflight
 
     logs: list[str] = []
     run_root = Path(artifact_dir) if artifact_dir else None
     if run_root is not None:
         run_root.mkdir(parents=True, exist_ok=True)
     discovery = discovery_profile or codegen_profile
+    preflight_meta: dict[str, Any] = {}
 
     def _p(msg: str) -> None:
         logs.append(msg)
@@ -842,6 +847,41 @@ async def run_mobile_task(
 
     if selected and not cloud:
         platform = infer_platform(selected, platform)
+
+    # Local lifecycle: install APK + Maestro clearState before explore/run
+    preflight_steps = normalize_preflight(preflight)
+    pkg_path = (
+        app_path
+        or (getattr(device_config, "app_path", "") if device_config is not None else "")
+        or ""
+    ).strip()
+    if live and selected and not cloud and (preflight_steps or clear_state):
+        preflight_meta = await run_preflight(
+            app_id=resolve_app_id(app_id, platform, goal),
+            platform=platform,
+            device_id=selected,
+            steps=preflight_steps,
+            app_path=pkg_path,
+            clear_state=clear_state,
+            progress=_p,
+            timeout_s=min(90, int(timeout_s) or 90),
+        )
+        if not preflight_meta.get("ok"):
+            return {
+                "success": False,
+                "summary": preflight_meta.get("message") or "preflight failed",
+                "error": preflight_meta.get("error") or "preflight_failed",
+                "logs": logs,
+                "device_id": selected,
+                "platform": platform,
+                "provider": provider,
+                "preflight": preflight_meta,
+                "run": {},
+            }
+        if preflight_meta.get("steps"):
+            _p("Preflight done: " + ", ".join(preflight_meta["steps"]))
+    elif live and cloud and (clear_state or "clear" in preflight_steps):
+        _p("Preflight clearState is local-only — cloud install uses device.app_path")
 
     scripts: dict[str, str] = {}
     exploration = ExplorationResult(
@@ -947,6 +987,7 @@ async def run_mobile_task(
         "synthesis_only": False,
         "maestro_status": status,
         "exploration": exploration.to_dict() if exploration.mode != "skipped" else None,
+        "preflight": preflight_meta or None,
     }
 
     can_run = False
