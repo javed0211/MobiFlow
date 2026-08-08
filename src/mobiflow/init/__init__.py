@@ -337,6 +337,18 @@ def _run_init_interactive(
 
     # Step 3 — device / stack
     _step(3, "Device defaults & Maestro stack")
+    provider = _require(
+        questionary.select(
+            "Device lab:",
+            choices=[
+                questionary.Choice("Local (adb / Android AVD / iOS Simulator)", value="local"),
+                questionary.Choice("BrowserStack App Automate (Maestro)", value="browserstack"),
+                questionary.Choice("TestMu AI / HyperExecute (Maestro)", value="testmu"),
+            ],
+            default="local",
+        ).ask(),
+        what="provider",
+    )
     platform = _require(
         questionary.select(
             "Default platform:",
@@ -351,7 +363,39 @@ def _run_init_interactive(
         default="",
         required=False,
     )
-    device = DeviceConfig(platform=platform, app_id=app_id)
+    device_kwargs: dict = {"provider": str(provider), "platform": platform, "app_id": app_id}
+    if provider != "local":
+        default_device = (
+            "Google Pixel 7-13.0"
+            if provider == "browserstack" and platform == "android"
+            else "iPhone 15-17.0"
+            if provider == "browserstack"
+            else "Pixel 6-14"
+            if platform == "android"
+            else "iPhone 15"
+        )
+        cloud_device = _ask_line(
+            "Cloud device name (comma-separated for multiple)",
+            what="device_id",
+            default=default_device,
+            required=True,
+        )
+        app_path = _ask_line(
+            "Path to .apk / .ipa to upload (or leave empty if using app_url later)",
+            what="app_path",
+            default="",
+            required=False,
+        )
+        device_kwargs["device_id"] = cloud_device
+        device_kwargs["app_path"] = app_path
+        device_kwargs["auto_start"] = False
+        if provider == "testmu":
+            real = questionary.confirm(
+                "Use real devices on TestMu? (No = virtual emulator/simulator)",
+                default=True,
+            ).ask()
+            device_kwargs["real_mobile"] = bool(real)
+    device = DeviceConfig(**device_kwargs)
     language = _require(
         questionary.select(
             "Maestro authoring language:",
@@ -373,8 +417,8 @@ def _run_init_interactive(
         scripts_dir="flows/scripts",
     )
     _ok(
-        f"Stack: maestro / {language} · platform={platform} · "
-        f"appId={app_id or '(per case)'}"
+        f"Stack: maestro / {language} · provider={provider} · "
+        f"platform={platform} · appId={app_id or '(per case)'}"
     )
 
     # Step 4 — missing packages / tools

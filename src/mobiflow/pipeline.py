@@ -54,16 +54,26 @@ def run_pipeline(
 
     console.print(f"[bold]Case[/bold] {case.name}")
     console.print(f"  task: {case.explore_task()[:200]}")
+    provider = cfg.device.provider or "local"
     console.print(
-        f"  platform={platform}  appId={app_id or '(infer)'}  "
+        f"  provider={provider}  platform={platform}  appId={app_id or '(infer)'}  "
         f"device={selected_device or '(auto)'}"
     )
+    if cfg.device.is_cloud():
+        console.print(
+            f"  cloud app_path={cfg.device.app_path or '-'}  "
+            f"app_url={cfg.device.app_url or '-'}"
+        )
     console.print(
         f"  LLM codegen={cfg.llm.codegen}  discovery={cfg.llm.discovery}  "
         f"lang={cfg.stack.language}"
     )
 
     import asyncio
+
+    run_timeout = max(cfg.run.timeout_s, cfg.device.boot_timeout_s)
+    if cfg.device.is_cloud():
+        run_timeout = max(run_timeout, int(cfg.device.cloud_timeout_s or 1800))
 
     result = asyncio.run(
         run_mobile_task(
@@ -75,11 +85,12 @@ def run_pipeline(
             device_id=selected_device,
             heal=0 if (no_heal or gen_only) else cfg.run.heal,
             adaptive=cfg.run.adaptive and not gen_only,
-            timeout_s=max(cfg.run.timeout_s, cfg.device.boot_timeout_s),
+            timeout_s=run_timeout,
             live=not gen_only,
             allow_js=allow_js,
-            auto_start_device=cfg.device.auto_start and not gen_only,
+            auto_start_device=cfg.device.auto_start and not gen_only and not cfg.device.is_cloud(),
             progress=progress,
+            device_config=cfg.device,
         )
     )
 
@@ -108,9 +119,11 @@ def run_pipeline(
             "language": cfg.stack.language,
             "device_id": result.get("device_id"),
             "platform": result.get("platform"),
+            "provider": result.get("provider") or provider,
             "synthesis_only": result.get("synthesis_only"),
             "logs": result.get("logs"),
             "error": result.get("error"),
+            "run": result.get("run"),
         }
         run_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
         latest = art / "runs" / f"{case.name}.latest.json"

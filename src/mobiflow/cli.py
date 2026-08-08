@@ -237,9 +237,11 @@ def llm_list(repo: str | None) -> None:
 @main.command("status")
 @click.option("--repo", default=None, help="Project path")
 def status_cmd(repo: str | None) -> None:
-    """Show Maestro CLI, Java, and connected / startable devices."""
+    """Show Maestro CLI, Java, local devices, and cloud lab readiness."""
+    from mobiflow.cloud import cloud_readiness
     from mobiflow.maestro import get_status
 
+    cfg = None
     # Config optional for status
     try:
         cfg = _load_config_or_exit(repo)
@@ -277,6 +279,24 @@ def status_cmd(repo: str | None) -> None:
                 f"  · \\[{plat}] {d.get('name')}  id={d.get('id')}  "
                 f"({d.get('source')})"
             )
+
+    if cfg is not None:
+        ready = cloud_readiness(cfg.device)
+        console.print(
+            f"\n[bold]Cloud[/bold]  provider={ready.get('provider')}  "
+            f"ready={ready.get('ready')}"
+        )
+        console.print(f"  {ready.get('message')}")
+        if ready.get("cloud"):
+            console.print(
+                f"  app_path={ready.get('app_path') or '-'}  "
+                f"app_url={ready.get('app_url') or '-'}"
+            )
+            if ready.get("username_env"):
+                console.print(
+                    f"  creds: ${ready.get('username_env')} / "
+                    f"${ready.get('access_key_env')}"
+                )
 
 
 @main.command("devices")
@@ -460,18 +480,24 @@ def gen_cmd(
 
 @main.command("test-flow")
 @click.argument("flow_file", type=click.Path(exists=True, dir_okay=False))
-@click.option("--device", "device_id", default=None, help="Device id")
+@click.option("--device", "device_id", default=None, help="Local device id or cloud device name")
 @click.option("--repo", default=None, help="Project path (for timeout/config)")
 def test_flow_cmd(flow_file: str, device_id: str | None, repo: str | None) -> None:
-    """Run an existing Maestro YAML file on a device."""
+    """Run an existing Maestro YAML file on a local or cloud device."""
     from mobiflow.maestro import run_flow_yaml
 
     cfg = None
     timeout = 180
+    device_config = None
+    platform = None
     try:
         cfg = _load_config_or_exit(repo)
         timeout = cfg.run.timeout_s
+        if cfg.device.is_cloud():
+            timeout = max(timeout, int(cfg.device.cloud_timeout_s or 1800))
         device_id = device_id or cfg.device.device_id
+        device_config = cfg.device
+        platform = cfg.device.platform
     except SystemExit:
         pass
 
@@ -481,13 +507,24 @@ def test_flow_cmd(flow_file: str, device_id: str | None, repo: str | None) -> No
         console.print(f"  [dim]→[/dim] {msg}")
 
     result = asyncio.run(
-        run_flow_yaml(yaml_text, device_id=device_id, timeout_s=timeout, progress=progress)
+        run_flow_yaml(
+            yaml_text,
+            device_id=device_id,
+            timeout_s=timeout,
+            progress=progress,
+            device_config=device_config,
+            platform=platform,
+        )
     )
     if result.get("ok"):
         console.print("[bold green]PASSED[/bold green]")
+        if result.get("dashboard_url"):
+            console.print(f"[dim]Dashboard:[/dim] {result['dashboard_url']}")
     else:
         console.print("[bold red]FAILED[/bold red]")
         err = (result.get("stderr") or result.get("stdout") or "")[:2000]
         if err:
             console.print(err)
+        if result.get("dashboard_url"):
+            console.print(f"[dim]Dashboard:[/dim] {result['dashboard_url']}")
         sys.exit(1)

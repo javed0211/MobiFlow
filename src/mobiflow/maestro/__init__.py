@@ -558,8 +558,42 @@ async def run_flow_yaml(
     scripts: Optional[dict[str, str]] = None,
     work_dir: Optional[Path] = None,
     progress: ProgressFn = None,
+    device_config: Any = None,
+    platform: Optional[str] = None,
 ) -> dict[str, Any]:
-    """Run Maestro YAML; writes companion JS beside the flow when provided."""
+    """Run Maestro YAML locally or on a cloud device lab.
+
+    When ``device_config.provider`` is ``browserstack`` or ``testmu``, uploads
+    the flow (and app) and executes via that lab instead of local ``maestro test``.
+    """
+    from mobiflow.cloud.base import is_cloud_provider
+
+    if device_config is not None and is_cloud_provider(
+        getattr(device_config, "provider", "local")
+    ):
+        from mobiflow.cloud.runner import request_from_device_config, run_on_cloud
+
+        if progress:
+            progress(
+                f"Running on cloud provider={device_config.provider} "
+                f"device={device_id or device_config.device_id or '(default)'}…"
+            )
+        req = request_from_device_config(
+            device_config,
+            flow_yaml=flow_yaml,
+            scripts=scripts,
+            platform=platform or getattr(device_config, "platform", "android"),
+            device_id=device_id,
+            timeout_s=max(
+                timeout_s, int(getattr(device_config, "cloud_timeout_s", 1800) or 1800)
+            ),
+        )
+        cloud_result = await run_on_cloud(req, progress=progress)
+        out = cloud_result.as_run_dict()
+        out["flow_yaml"] = flow_yaml
+        out["scripts"] = scripts or {}
+        return out
+
     binary = resolve_maestro_binary()
     if not binary:
         return {
@@ -621,9 +655,11 @@ async def run_mobile_task(
     allow_js: bool = True,
     auto_start_device: bool = True,
     progress: ProgressFn = None,
+    device_config: Any = None,
 ) -> dict[str, Any]:
     """Full agent loop: status → author YAML(+JS) → run → optional heal."""
     del discovery_profile  # reserved for future adaptive planner profile split
+    from mobiflow.cloud.base import is_cloud_provider
     from mobiflow.devices import ensure_device
 
     logs: list[str] = []
@@ -633,11 +669,44 @@ async def run_mobile_task(
         if progress:
             progress(msg)
 
+    cloud = bool(
+        device_config is not None
+        and is_cloud_provider(getattr(device_config, "provider", "local"))
+    )
+    provider = (
+        getattr(device_config, "provider", "local") if device_config is not None else "local"
+    )
+
     status = await get_status()
-    _p(status.get("message") or "Checking Maestro…")
+    if cloud:
+        from mobiflow.cloud import cloud_readiness
+
+        ready = cloud_readiness(device_config)
+        _p(ready.get("message") or f"Cloud provider={provider}")
+        # Cloud runs do not need local Maestro CLI / adb
+        status = {
+            **status,
+            "ready": bool(ready.get("ready")),
+            "cloud": ready,
+            "message": ready.get("message") or status.get("message"),
+        }
+    else:
+        _p(status.get("message") or "Checking Maestro…")
 
     selected = (device_id or "").strip()
-    if live:
+    if cloud:
+        selected = selected or (getattr(device_config, "device_id", None) or "")
+        selected = (selected or "").strip()
+        if not selected:
+            from mobiflow.cloud.base import devices_from_config, normalize_provider
+
+            selected = devices_from_config(
+                None,
+                platform=platform,
+                provider=normalize_provider(provider),
+            )[0]
+            _p(f"Using default cloud device: {selected}")
+    elif live:
         ensured = await ensure_device(
             platform_pref=platform,
             device_id=selected or None,
@@ -660,7 +729,7 @@ async def run_mobile_task(
             match = next((d for d in devices if d.get("platform") == plat), None)
             selected = (match or devices[0]).get("id") or ""
 
-    if selected:
+    if selected and not cloud:
         platform = infer_platform(selected, platform)
 
     scripts: dict[str, str] = {}
@@ -672,9 +741,11 @@ async def run_mobile_task(
         _p("Detected Maestro YAML — running as-is.")
     else:
         hierarchy = ""
-        if live and adaptive and selected and status.get("installed"):
+        if live and adaptive and selected and status.get("installed") and not cloud:
             _p("Fetching view hierarchy…")
             hierarchy = await fetch_hierarchy(selected)
+        elif cloud and adaptive:
+            _p("Skipping local hierarchy (cloud provider) — heal uses failure logs only.")
         bundle = await generate_flow_bundle(
             goal,
             app_id=app_id,
@@ -697,16 +768,29 @@ async def run_mobile_task(
         "scripts": scripts,
         "device_id": selected or None,
         "platform": platform,
+        "provider": provider,
         "logs": logs,
         "synthesis_only": False,
         "maestro_status": status,
     }
 
-    if not live or not status.get("installed") or not selected:
+    can_run = False
+    if live and selected:
+        if cloud:
+            can_run = bool((status.get("cloud") or {}).get("ready"))
+        else:
+            can_run = bool(status.get("installed"))
+
+    if not live or not can_run:
         result["success"] = True
         result["synthesis_only"] = True
         if not live:
             result["summary"] = "Flow generated (--gen-only; skipped device run)."
+        elif cloud:
+            result["summary"] = (
+                "Flow generated (cloud lab not ready — skipped run). "
+                + str((status.get("cloud") or {}).get("message") or "")
+            ).strip()
         else:
             result["summary"] = "Flow generated (no live device / Maestro — skipped run)."
         _p(result["summary"])
@@ -714,6 +798,7 @@ async def run_mobile_task(
 
     attempt = 0
     last_run: dict[str, Any] = {}
+    # Cloud heal is expensive; still honor heal but hierarchy is unavailable
     while attempt <= max(0, heal):
         attempt += 1
         _p(f"Device run attempt {attempt}/{max(1, heal + 1)}…")
@@ -723,21 +808,38 @@ async def run_mobile_task(
             timeout_s=timeout_s,
             scripts=scripts,
             progress=_p,
+            device_config=device_config,
+            platform=platform,
         )
         if last_run.get("ok"):
             result["success"] = True
-            result["summary"] = "Maestro flow passed on device."
+            where = f"cloud:{provider}" if cloud else "device"
+            result["summary"] = f"Maestro flow passed on {where}."
             result["run"] = {
-                k: last_run.get(k) for k in ("returncode", "stdout", "stderr")
+                k: last_run.get(k)
+                for k in (
+                    "returncode",
+                    "stdout",
+                    "stderr",
+                    "provider",
+                    "build_id",
+                    "dashboard_url",
+                    "status",
+                )
+                if k in last_run
             }
             _p(result["summary"])
+            if last_run.get("dashboard_url"):
+                _p(f"Dashboard: {last_run['dashboard_url']}")
             return result
 
         failure = (last_run.get("stderr") or "") + "\n" + (last_run.get("stdout") or "")
         if attempt > heal:
             break
         _p("Flow failed — repairing with LLM…")
-        hierarchy = await fetch_hierarchy(selected) if adaptive else ""
+        hierarchy = ""
+        if adaptive and not cloud:
+            hierarchy = await fetch_hierarchy(selected)
         bundle = await generate_flow_bundle(
             goal,
             app_id=app_id,
@@ -758,6 +860,18 @@ async def run_mobile_task(
     result["success"] = False
     result["summary"] = "Maestro flow failed after heal attempts."
     result["error"] = last_run.get("error") or "flow_failed"
-    result["run"] = {k: last_run.get(k) for k in ("returncode", "stdout", "stderr")}
+    result["run"] = {
+        k: last_run.get(k)
+        for k in (
+            "returncode",
+            "stdout",
+            "stderr",
+            "provider",
+            "build_id",
+            "dashboard_url",
+            "status",
+        )
+        if k in last_run
+    }
     _p(result["summary"])
     return result

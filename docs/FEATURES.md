@@ -45,6 +45,7 @@ MobiFlow discovers **online** devices and **startable** targets:
 
 ```yaml
 device:
+  provider: local     # local | browserstack | testmu
   platform: android   # or ios
   auto_start: true
   boot_timeout_s: 120
@@ -59,6 +60,43 @@ mobiflow run cases/example.txt   # uses auto_start from config
 ```
 
 SDK paths checked: `ANDROID_HOME` / `ANDROID_SDK_ROOT`, macOS `~/Library/Android/sdk`, Windows `%LOCALAPPDATA%\Android\Sdk`.
+
+## Cloud device labs (BrowserStack + TestMu)
+
+Run the same Maestro flows on real devices in the cloud — no local emulator required.
+
+| Provider | How it runs | Credentials |
+|----------|-------------|-------------|
+| `browserstack` | App Automate Maestro REST (upload app + zip suite → build → poll) | `BROWSERSTACK_USERNAME` / `BROWSERSTACK_ACCESS_KEY` |
+| `testmu` | TestMu AI HyperExecute (uploads app, generates YAML, runs CLI) | `TESTMU_USERNAME` / `TESTMU_ACCESS_KEY` (or `LT_*`) |
+
+```yaml
+device:
+  provider: browserstack          # or testmu
+  platform: android
+  device_id: "Google Pixel 7-13.0"  # TestMu e.g. "Pixel 6-14"
+  app_path: builds/app-debug.apk  # upload each run
+  # app_url: bs://…               # or reuse a previous upload
+  cloud_project: MobiFlow
+  real_mobile: true               # testmu only
+  cloud_timeout_s: 1800
+```
+
+```bash
+export BROWSERSTACK_USERNAME=...
+export BROWSERSTACK_ACCESS_KEY=...
+# or: TESTMU_USERNAME / TESTMU_ACCESS_KEY (LT_USERNAME / LT_ACCESS_KEY also work)
+
+mobiflow status                 # shows cloud readiness
+mobiflow run cases/example.txt  # uploads + executes on the cloud device
+mobiflow test-flow flows/foo.yaml
+```
+
+Notes:
+
+- Adaptive hierarchy heal is **local-only**; cloud heal uses failure logs.
+- TestMu auto-downloads the HyperExecute CLI to `~/.mobiflow/bin` on first run.
+- `mobiflow init` step 3 lets you pick BrowserStack / TestMu and set device + app path.
 
 ## Dual LLM roles
 

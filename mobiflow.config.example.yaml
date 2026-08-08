@@ -23,14 +23,28 @@ stack:
   cases_dir: cases
 
 device:
+  provider: local              # local | browserstack | testmu
   platform: android
   app_id: ""                   # e.g. org.wikipedia — or set per case
-  device_id: ""                # adb serial | AVD name | iOS UDID | empty=auto
-  auto_start: true             # start Android AVD (Win/Mac) or Xcode sim (Mac) if none online
+  device_id: ""                # local: adb serial | AVD | UDID
+                               # browserstack: "Google Pixel 7-13.0"
+                               # testmu: "Pixel 6-14"
+  auto_start: true             # local only — start AVD / Xcode sim if none online
   boot_timeout_s: 120
+  # --- Cloud device labs (BrowserStack / TestMu) ---
+  app_path: ""                 # path to .apk / .ipa to upload
+  app_url: ""                  # or existing bs://… / lt://… (skip upload)
+  cloud_project: MobiFlow
+  cloud_build_name: ""
+  real_mobile: true            # testmu: real device vs virtual
+  username_env: ""             # optional; defaults:
+                               #   browserstack → BROWSERSTACK_USERNAME
+                               #   testmu → TESTMU_USERNAME (or LT_USERNAME)
+  access_key_env: ""           # BROWSERSTACK_ACCESS_KEY / TESTMU_ACCESS_KEY / LT_ACCESS_KEY
+  cloud_timeout_s: 1800
 
 run:
   heal: 2                      # YAML repair attempts (0 = off)
-  adaptive: true               # use view hierarchy when device is live
+  adaptive: true               # use view hierarchy when device is live (local)
   timeout_s: 180
   save_artifacts: true

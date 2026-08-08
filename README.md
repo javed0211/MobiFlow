@@ -123,7 +123,7 @@ task: Open Wikipedia, dismiss onboarding, confirm Search is visible
 | `mobiflow run <case.txt> --gen-only` | Author YAML only |
 | `mobiflow gen "Open Settings…"` | One-shot NL → YAML |
 | `mobiflow test-flow flows/foo.yaml` | Run existing YAML |
-| `mobiflow status` / `devices` | Maestro + online / startable devices |
+| `mobiflow status` / `devices` | Maestro + local devices + cloud lab readiness |
 | `mobiflow devices --start` | Auto-start Android AVD (Win/Mac) or Xcode sim (Mac) |
 | `mobiflow config show` / `llm list` | Inspect config / catalog |
 
@@ -136,12 +136,23 @@ task: Open Wikipedia, dismiss onboarding, confirm Search is visible
 
 Companion scripts land under `flows/scripts/`.
 
+## Cloud device labs
+
+Set `device.provider` to `browserstack` or `testmu` to run on real devices in the cloud
+(same Maestro YAML; no local emulator required). See [docs/FEATURES.md](docs/FEATURES.md).
+
+```bash
+export BROWSERSTACK_USERNAME=... BROWSERSTACK_ACCESS_KEY=...
+# or TESTMU_USERNAME / TESTMU_ACCESS_KEY (LT_* aliases work)
+```
+
 ## Pipeline
 
 ```
 1. Load case + config (llm.json profiles)
 2. Author Maestro YAML (+ JS when enabled)
-3. maestro test --device <id>
+3. Local: maestro test --device <id>
+   Cloud: upload app + suite → BrowserStack / TestMu HyperExecute
 4. On fail → repair with failure log (≤ run.heal) → re-run
 5. Write flows/<case>.yaml (+ scripts) + .mobiflow/runs/
 ```

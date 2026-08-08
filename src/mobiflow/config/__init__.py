@@ -124,11 +124,44 @@ class StackConfig(BaseModel):
 
 
 class DeviceConfig(BaseModel):
+    """Local or cloud device lab settings.
+
+    ``provider``:
+      - ``local`` — adb / Android AVD / iOS Simulator (default)
+      - ``browserstack`` — BrowserStack App Automate Maestro REST API
+      - ``testmu`` — TestMu AI (formerly LambdaTest) HyperExecute Maestro
+    """
+
+    provider: str = "local"  # local | browserstack | testmu
     platform: str = "android"  # android | ios
     app_id: str = ""
-    device_id: Optional[str] = None  # adb serial, AVD name, or iOS UDID; empty = auto
-    auto_start: bool = True  # start Android AVD / iOS Simulator if none online
+    device_id: Optional[str] = None  # local serial/UDID OR cloud device name
+    auto_start: bool = True  # local only: start AVD / iOS Simulator if none online
     boot_timeout_s: int = 120  # wait for emulator/simulator boot
+
+    # Cloud labs (BrowserStack / TestMu)
+    app_path: str = ""  # local .apk / .ipa / .aab to upload
+    app_url: str = ""  # already-uploaded bs://… or lt://…
+    cloud_project: str = "MobiFlow"
+    cloud_build_name: str = ""
+    real_mobile: bool = True  # TestMu: real device vs virtual
+    username_env: str = ""  # override default credential env var names
+    access_key_env: str = ""
+    cloud_timeout_s: int = 1800  # cloud build/job timeout
+    poll_interval_s: float = 15.0  # BrowserStack status poll
+    browserstack_local: bool = False  # enable BS local testing flag
+
+    @field_validator("provider")
+    @classmethod
+    def _check_provider(cls, v: str) -> str:
+        from mobiflow.cloud.base import normalize_provider
+
+        return normalize_provider(v).value
+
+    def is_cloud(self) -> bool:
+        from mobiflow.cloud.base import is_cloud_provider
+
+        return is_cloud_provider(self.provider)
 
 
 class RunConfig(BaseModel):
@@ -270,11 +303,20 @@ def render_simple_config(config: MobiflowConfig) -> str:
         f"  cases_dir: {stack.cases_dir}",
         "",
         "device:",
+        f"  provider: {device.provider}   # local | browserstack | testmu",
         f"  platform: {device.platform}",
         f"  app_id: {device.app_id or '\"\"'}   # e.g. org.wikipedia / org.wikimedia.wikipedia",
-        f"  device_id: {device.device_id or '\"\"'}  # adb serial | AVD name | iOS UDID | empty=auto",
-        f"  auto_start: {str(device.auto_start).lower()}   # start AVD (Win/Mac) or Xcode sim (Mac) if none online",
+        f"  device_id: {device.device_id or '\"\"'}  # local serial/UDID OR cloud device (e.g. Google Pixel 7-13.0)",
+        f"  auto_start: {str(device.auto_start).lower()}   # local only: start AVD / Xcode sim if none online",
         f"  boot_timeout_s: {device.boot_timeout_s}",
+        f"  app_path: {device.app_path or '\"\"'}   # cloud: path to .apk / .ipa to upload",
+        f"  app_url: {device.app_url or '\"\"'}    # cloud: existing bs://… or lt://… (skip upload)",
+        f"  cloud_project: {device.cloud_project or 'MobiFlow'}",
+        f"  cloud_build_name: {device.cloud_build_name or '\"\"'}",
+        f"  real_mobile: {str(device.real_mobile).lower()}   # testmu: real device vs emulator/simulator",
+        f"  username_env: {device.username_env or '\"\"'}   # optional override (defaults by provider)",
+        f"  access_key_env: {device.access_key_env or '\"\"'}",
+        f"  cloud_timeout_s: {device.cloud_timeout_s}",
         "",
         "run:",
         f"  heal: {run.heal}          # YAML repair attempts (0 = off)",
@@ -337,6 +379,16 @@ def config_warnings(config: MobiflowConfig) -> list[str]:
             f"No {config.llm.catalog} found — using legacy inline llm settings. "
             "Run mobiflow init or add llm.json for multi-model support."
         )
+
+    if config.device.is_cloud():
+        try:
+            from mobiflow.cloud import cloud_readiness
+
+            ready = cloud_readiness(config.device)
+            if not ready.get("ready"):
+                out.append(ready.get("message") or "Cloud device lab not ready.")
+        except Exception as e:  # noqa: BLE001
+            out.append(f"cloud device: {e}")
     return out
 
 
