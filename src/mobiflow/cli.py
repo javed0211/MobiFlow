@@ -484,7 +484,15 @@ def gen_cmd(
 @click.option("--repo", default=None, help="Project path (for timeout/config)")
 def test_flow_cmd(flow_file: str, device_id: str | None, repo: str | None) -> None:
     """Run an existing Maestro YAML file on a local or cloud device."""
+    import time
+    from datetime import datetime, timezone
+
     from mobiflow.maestro import run_flow_yaml
+    from mobiflow.reporting import (
+        ReportCase,
+        collect_screenshots,
+        write_run_reports,
+    )
 
     cfg = None
     timeout = 180
@@ -502,10 +510,17 @@ def test_flow_cmd(flow_file: str, device_id: str | None, repo: str | None) -> No
         pass
 
     yaml_text = Path(flow_file).read_text(encoding="utf-8")
+    case_name = Path(flow_file).stem
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    artifact_dir = None
+    if cfg is not None and cfg.run.save_artifacts:
+        artifact_dir = cfg.artifacts_dir() / "runs" / f"{case_name}-{stamp}"
+        artifact_dir.mkdir(parents=True, exist_ok=True)
 
     def progress(msg: str) -> None:
         console.print(f"  [dim]→[/dim] {msg}")
 
+    t0 = time.monotonic()
     result = asyncio.run(
         run_flow_yaml(
             yaml_text,
@@ -514,8 +529,69 @@ def test_flow_cmd(flow_file: str, device_id: str | None, repo: str | None) -> No
             progress=progress,
             device_config=device_config,
             platform=platform,
+            artifact_dir=artifact_dir,
         )
     )
+    duration_s = time.monotonic() - t0
+
+    if cfg is not None and cfg.run.save_artifacts and artifact_dir is not None:
+        shots_dir = artifact_dir / "screenshots"
+        shot_rels: list[str] = []
+        for src in collect_screenshots(artifact_dir):
+            shots_dir.mkdir(parents=True, exist_ok=True)
+            dest = shots_dir / src.name
+            if not dest.exists():
+                dest.write_bytes(src.read_bytes())
+            shot_rels.append(f"../screenshots/{dest.name}")
+        if cfg.run.reports:
+            report_case = ReportCase(
+                name=case_name,
+                success=bool(result.get("ok")),
+                summary="passed" if result.get("ok") else (result.get("error") or "failed"),
+                error=str(result.get("error") or ""),
+                platform=str(platform or ""),
+                provider=str(
+                    (cfg.device.provider if cfg is not None else "local") or "local"
+                ),
+                device_id=str(device_id or ""),
+                duration_s=duration_s,
+                flow_path=str(Path(flow_file).resolve()),
+                dashboard_url=str(result.get("dashboard_url") or ""),
+                build_id=str(result.get("build_id") or ""),
+                stdout=str(result.get("stdout") or ""),
+                stderr=str(result.get("stderr") or ""),
+                screenshot_paths=shot_rels,
+                artifact_dir=str(artifact_dir),
+            )
+            junit_src = (
+                Path(result["maestro_junit"]) if result.get("maestro_junit") else None
+            )
+            write_run_reports(
+                report_case,
+                artifact_dir / "report",
+                formats=cfg.run.reports,
+                maestro_junit=junit_src,
+            )
+            mirror_dir = cfg.report_dir_path() / f"{case_name}-{stamp}"
+            mirrored = write_run_reports(
+                report_case,
+                mirror_dir,
+                formats=cfg.run.reports,
+                maestro_junit=junit_src,
+            )
+            src_shots = artifact_dir / "screenshots"
+            if src_shots.is_dir():
+                mirror_shots = mirror_dir / "screenshots"
+                mirror_shots.mkdir(parents=True, exist_ok=True)
+                for img in src_shots.iterdir():
+                    if img.is_file():
+                        (mirror_shots / img.name).write_bytes(img.read_bytes())
+            if mirrored.get("html"):
+                console.print(f"[green]HTML report[/green] → {mirrored['html']}")
+            if mirrored.get("junit"):
+                console.print(f"[green]JUnit[/green] → {mirrored['junit']}")
+            console.print(f"[dim]Artifacts → {artifact_dir}[/dim]")
+
     if result.get("ok"):
         console.print("[bold green]PASSED[/bold green]")
         if result.get("dashboard_url"):

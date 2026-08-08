@@ -136,6 +136,17 @@ task: Open Wikipedia, dismiss onboarding, confirm Search is visible
 
 Companion scripts land under `flows/scripts/`.
 
+## Reporting
+
+Each live run can write **JUnit** + **HTML** under `.mobiflow/reports/` (and under the run folder),
+plus Maestro debug output / screenshots when running locally.
+
+```yaml
+run:
+  reports: [junit, html]
+  report_dir: .mobiflow/reports
+```
+
 ## Cloud device labs
 
 Set `device.provider` to `browserstack` or `testmu` to run on real devices in the cloud

@@ -70,15 +70,15 @@ class LlmConfig(BaseModel):
     """Selects catalog profiles for discovery (adaptive explore) and codegen (YAML)."""
 
     catalog: str = "llm.json"
-    discovery: Optional[str] = None  # adaptive plan / device explore
-    codegen: Optional[str] = None  # Maestro YAML authoring
+    discovery: str | None = None  # adaptive plan / device explore
+    codegen: str | None = None  # Maestro YAML authoring
 
     # Legacy inline (used when discovery/codegen unset)
     provider: str = "openai"
-    model: Optional[str] = None
+    model: str | None = None
     api_key_env: str = "MOBIFLOW_LLM_API_KEY"
-    endpoint: Optional[str] = None
-    azure_endpoint: Optional[str] = None
+    endpoint: str | None = None
+    azure_endpoint: str | None = None
     azure_endpoint_env: str = "AZURE_OPENAI_ENDPOINT"
     azure_api_version: str = "2025-03-01-preview"
 
@@ -135,7 +135,7 @@ class DeviceConfig(BaseModel):
     provider: str = "local"  # local | browserstack | testmu
     platform: str = "android"  # android | ios
     app_id: str = ""
-    device_id: Optional[str] = None  # local serial/UDID OR cloud device name
+    device_id: str | None = None  # local serial/UDID OR cloud device name
     auto_start: bool = True  # local only: start AVD / iOS Simulator if none online
     boot_timeout_s: int = 120  # wait for emulator/simulator boot
 
@@ -169,6 +169,16 @@ class RunConfig(BaseModel):
     adaptive: bool = True  # perceive→act loop when device is live
     timeout_s: int = 180  # maestro test timeout
     save_artifacts: bool = True
+    # Reporting: junit | html (comma-string or list). Empty / none disables.
+    reports: list[str] = Field(default_factory=lambda: ["junit", "html"])
+    report_dir: str = ".mobiflow/reports"  # relative to project path
+
+    @field_validator("reports", mode="before")
+    @classmethod
+    def _coerce_reports(cls, v: Any) -> list[str]:
+        from mobiflow.reporting import normalize_report_formats
+
+        return normalize_report_formats(v)
 
 
 class ProjectConfig(BaseModel):
@@ -201,6 +211,13 @@ class MobiflowConfig(BaseModel):
 
     def artifacts_dir(self) -> Path:
         return (self.repo_path() / ".mobiflow").resolve()
+
+    def report_dir_path(self) -> Path:
+        raw = (self.run.report_dir or ".mobiflow/reports").strip() or ".mobiflow/reports"
+        p = Path(raw).expanduser()
+        if p.is_absolute():
+            return p.resolve()
+        return (self.repo_path() / p).resolve()
 
     def catalog_file(self) -> Path:
         name = self.llm.catalog or "llm.json"
@@ -323,6 +340,8 @@ def render_simple_config(config: MobiflowConfig) -> str:
         f"  adaptive: {str(run.adaptive).lower()}   # perceive→act when device is live",
         f"  timeout_s: {run.timeout_s}",
         f"  save_artifacts: {str(run.save_artifacts).lower()}",
+        f"  reports: [{', '.join(run.reports) if run.reports else ''}]   # junit, html — empty disables",
+        f"  report_dir: {run.report_dir}",
         "",
         "# Edit llm.json to add Azure / OpenAI / Anthropic / Google models.",
         "# Then change discovery: / codegen: above to the profile ids you want.",
@@ -338,7 +357,7 @@ def save_config(config: MobiflowConfig, repo: Path | str | None = None) -> Path:
     return path
 
 
-def find_config(start: Path | None = None) -> Optional[Path]:
+def find_config(start: Path | None = None) -> Path | None:
     cur = (start or Path.cwd()).resolve()
     for candidate in [cur, *cur.parents]:
         p = candidate / CONFIG_FILENAME

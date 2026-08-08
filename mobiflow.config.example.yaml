@@ -48,3 +48,5 @@ run:
   adaptive: true               # use view hierarchy when device is live (local)
   timeout_s: 180
   save_artifacts: true
+  reports: [junit, html]       # junit, html — set [] to disable
+  report_dir: .mobiflow/reports

@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import re
 import shutil
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Optional
 
 from mobiflow.llm import (
     extract_fenced_files,
@@ -46,7 +48,7 @@ _KNOWN_APP_IDS = {
 }
 
 
-def resolve_maestro_binary() -> Optional[str]:
+def resolve_maestro_binary() -> str | None:
     which = shutil.which("maestro")
     if which:
         return which
@@ -56,7 +58,7 @@ def resolve_maestro_binary() -> Optional[str]:
     return None
 
 
-def resolve_java_home() -> Optional[str]:
+def resolve_java_home() -> str | None:
     jh = os.environ.get("JAVA_HOME")
     if jh and Path(jh).is_dir():
         return jh
@@ -105,7 +107,7 @@ async def _run_cmd(
     args: list[str],
     *,
     timeout: float = 120.0,
-    cwd: Optional[str] = None,
+    cwd: str | None = None,
 ) -> dict[str, Any]:
     try:
         proc = await asyncio.create_subprocess_exec(
@@ -125,7 +127,7 @@ async def _run_cmd(
         }
     try:
         stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         try:
             proc.kill()
         except ProcessLookupError:
@@ -163,7 +165,7 @@ async def list_device_targets() -> list[dict[str, str]]:
     return await list_all_targets()
 
 
-async def get_maestro_version() -> Optional[str]:
+async def get_maestro_version() -> str | None:
     binary = resolve_maestro_binary()
     if not binary:
         return None
@@ -179,7 +181,11 @@ async def get_maestro_version() -> Optional[str]:
 
 
 async def get_status() -> dict[str, Any]:
-    from mobiflow.devices import host_capabilities, list_all_targets, list_connected_devices
+    from mobiflow.devices import (
+        host_capabilities,
+        list_all_targets,
+        list_connected_devices,
+    )
 
     binary = resolve_maestro_binary()
     installed = binary is not None
@@ -338,7 +344,7 @@ def parse_flow_bundle(text: str, *, app_id: str) -> FlowBundle:
                 path = f"scripts/{path}"
             # Strip leading // file: line if present
             lines = body.splitlines()
-            if lines and re.match(r"^//\s*file:", lines[0], re.I):
+            if lines and re.match(r"^//\s*file:", lines[0], re.IGNORECASE):
                 body = "\n".join(lines[1:]).strip()
             scripts[path] = body
         elif lower.endswith((".yaml", ".yml")) or looks_like_maestro_yaml(body):
@@ -400,7 +406,7 @@ async def generate_flow_bundle(
     profile: ModelEntry,
     hierarchy: str = "",
     previous_yaml: str = "",
-    previous_scripts: Optional[dict[str, str]] = None,
+    previous_scripts: dict[str, str] | None = None,
     failure_log: str = "",
     allow_js: bool = True,
     progress: ProgressFn = None,
@@ -539,7 +545,7 @@ def _wikipedia_open_flow(platform: str, app_id: str) -> str:
     )
 
 
-async def fetch_hierarchy(device_id: Optional[str] = None) -> str:
+async def fetch_hierarchy(device_id: str | None = None) -> str:
     binary = resolve_maestro_binary()
     if not binary:
         return ""
@@ -550,21 +556,58 @@ async def fetch_hierarchy(device_id: Optional[str] = None) -> str:
     return (result.get("stdout") or "")[:12000]
 
 
+def _maestro_test_args(
+    binary: str,
+    flow_path: Path,
+    *,
+    device_id: str | None = None,
+    artifact_dir: Path | None = None,
+) -> list[str]:
+    args = [binary, "test", str(flow_path)]
+    if device_id:
+        args.extend(["--device", device_id])
+    if artifact_dir is not None:
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+        debug_dir = artifact_dir / "maestro-debug"
+        test_out = artifact_dir / "maestro-output"
+        junit_path = artifact_dir / "maestro-junit.xml"
+        debug_dir.mkdir(parents=True, exist_ok=True)
+        test_out.mkdir(parents=True, exist_ok=True)
+        args.extend(
+            [
+                "--debug-output",
+                str(debug_dir),
+                "--flatten-debug-output",
+                "--test-output-dir",
+                str(test_out),
+                "--format",
+                "JUNIT",
+                "--output",
+                str(junit_path),
+            ]
+        )
+    return args
+
+
 async def run_flow_yaml(
     flow_yaml: str,
     *,
-    device_id: Optional[str] = None,
+    device_id: str | None = None,
     timeout_s: int = 180,
-    scripts: Optional[dict[str, str]] = None,
-    work_dir: Optional[Path] = None,
+    scripts: dict[str, str] | None = None,
+    work_dir: Path | None = None,
     progress: ProgressFn = None,
     device_config: Any = None,
-    platform: Optional[str] = None,
+    platform: str | None = None,
+    artifact_dir: Path | None = None,
 ) -> dict[str, Any]:
     """Run Maestro YAML locally or on a cloud device lab.
 
     When ``device_config.provider`` is ``browserstack`` or ``testmu``, uploads
     the flow (and app) and executes via that lab instead of local ``maestro test``.
+
+    For local runs, ``artifact_dir`` enables Maestro ``--debug-output``,
+    ``--test-output-dir``, and JUnit ``--format/--output``.
     """
     from mobiflow.cloud.base import is_cloud_provider
 
@@ -592,6 +635,23 @@ async def run_flow_yaml(
         out = cloud_result.as_run_dict()
         out["flow_yaml"] = flow_yaml
         out["scripts"] = scripts or {}
+        if artifact_dir is not None:
+            artifact_dir.mkdir(parents=True, exist_ok=True)
+            (artifact_dir / "cloud-result.json").write_text(
+                json.dumps(
+                    {
+                        "provider": out.get("provider"),
+                        "build_id": out.get("build_id"),
+                        "status": out.get("status"),
+                        "dashboard_url": out.get("dashboard_url"),
+                        "ok": out.get("ok"),
+                    },
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            out["artifact_dir"] = str(artifact_dir)
         return out
 
     binary = resolve_maestro_binary()
@@ -613,41 +673,66 @@ async def run_flow_yaml(
             sp.write_text(body, encoding="utf-8")
         return flow_path
 
+    def _finalize(result: dict[str, Any], root: Path) -> dict[str, Any]:
+        result["flow_yaml"] = flow_yaml
+        result["scripts"] = scripts or {}
+        if artifact_dir is not None:
+            result["artifact_dir"] = str(artifact_dir)
+            junit = artifact_dir / "maestro-junit.xml"
+            if junit.is_file():
+                result["maestro_junit"] = str(junit)
+            # Persist a copy of the flow used for this attempt
+            try:
+                (artifact_dir / "flow.yaml").write_text(flow_yaml, encoding="utf-8")
+            except OSError:
+                pass
+            result["maestro_debug_dir"] = str(artifact_dir / "maestro-debug")
+            result["maestro_output_dir"] = str(artifact_dir / "maestro-output")
+        result["work_dir"] = str(root)
+        return result
+
     if work_dir is not None:
         work_dir.mkdir(parents=True, exist_ok=True)
         flow_path = _write_bundle(work_dir)
-        args = [binary, "test", str(flow_path)]
-        if device_id:
-            args.extend(["--device", device_id])
+        args = _maestro_test_args(
+            binary, flow_path, device_id=device_id, artifact_dir=artifact_dir
+        )
         if progress:
             progress(f"Running maestro test{' on ' + device_id if device_id else ''}…")
         result = await _run_cmd(args, timeout=float(timeout_s), cwd=str(work_dir))
-        result["flow_yaml"] = flow_yaml
-        result["scripts"] = scripts or {}
-        return result
+        return _finalize(result, work_dir)
+
+    # Prefer durable artifact_dir as work root when provided
+    if artifact_dir is not None:
+        root = Path(artifact_dir) / "bundle"
+        root.mkdir(parents=True, exist_ok=True)
+        flow_path = _write_bundle(root)
+        args = _maestro_test_args(
+            binary, flow_path, device_id=device_id, artifact_dir=artifact_dir
+        )
+        if progress:
+            progress(f"Running maestro test{' on ' + device_id if device_id else ''}…")
+        result = await _run_cmd(args, timeout=float(timeout_s), cwd=str(root))
+        return _finalize(result, root)
 
     with tempfile.TemporaryDirectory(prefix="mobiflow-") as tmp:
         root = Path(tmp)
         flow_path = _write_bundle(root)
-        args = [binary, "test", str(flow_path)]
-        if device_id:
-            args.extend(["--device", device_id])
+        args = _maestro_test_args(binary, flow_path, device_id=device_id)
         if progress:
             progress(f"Running maestro test{' on ' + device_id if device_id else ''}…")
         result = await _run_cmd(args, timeout=float(timeout_s), cwd=str(root))
-        result["flow_yaml"] = flow_yaml
-        result["scripts"] = scripts or {}
-        return result
+        return _finalize(result, root)
 
 
 async def run_mobile_task(
     goal: str,
     *,
     codegen_profile: ModelEntry,
-    discovery_profile: Optional[ModelEntry] = None,
+    discovery_profile: ModelEntry | None = None,
     app_id: str = "",
     platform: str = "android",
-    device_id: Optional[str] = None,
+    device_id: str | None = None,
     heal: int = 2,
     adaptive: bool = True,
     timeout_s: int = 180,
@@ -656,6 +741,7 @@ async def run_mobile_task(
     auto_start_device: bool = True,
     progress: ProgressFn = None,
     device_config: Any = None,
+    artifact_dir: Path | None = None,
 ) -> dict[str, Any]:
     """Full agent loop: status → author YAML(+JS) → run → optional heal."""
     del discovery_profile  # reserved for future adaptive planner profile split
@@ -663,6 +749,9 @@ async def run_mobile_task(
     from mobiflow.devices import ensure_device
 
     logs: list[str] = []
+    run_root = Path(artifact_dir) if artifact_dir else None
+    if run_root is not None:
+        run_root.mkdir(parents=True, exist_ok=True)
 
     def _p(msg: str) -> None:
         logs.append(msg)
@@ -798,10 +887,15 @@ async def run_mobile_task(
 
     attempt = 0
     last_run: dict[str, Any] = {}
+    attempts_meta: list[dict[str, Any]] = []
     # Cloud heal is expensive; still honor heal but hierarchy is unavailable
     while attempt <= max(0, heal):
         attempt += 1
         _p(f"Device run attempt {attempt}/{max(1, heal + 1)}…")
+        attempt_dir = None
+        if run_root is not None:
+            attempt_dir = run_root / "attempts" / f"{attempt:02d}"
+            attempt_dir.mkdir(parents=True, exist_ok=True)
         last_run = await run_flow_yaml(
             flow,
             device_id=selected,
@@ -810,7 +904,20 @@ async def run_mobile_task(
             progress=_p,
             device_config=device_config,
             platform=platform,
+            artifact_dir=attempt_dir,
         )
+        attempts_meta.append(
+            {
+                "attempt": attempt,
+                "ok": bool(last_run.get("ok")),
+                "artifact_dir": last_run.get("artifact_dir"),
+                "error": last_run.get("error"),
+                "build_id": last_run.get("build_id"),
+                "dashboard_url": last_run.get("dashboard_url"),
+            }
+        )
+        result["attempts"] = attempts_meta
+        result["artifact_dir"] = str(run_root) if run_root else last_run.get("artifact_dir")
         if last_run.get("ok"):
             result["success"] = True
             where = f"cloud:{provider}" if cloud else "device"
@@ -825,6 +932,10 @@ async def run_mobile_task(
                     "build_id",
                     "dashboard_url",
                     "status",
+                    "artifact_dir",
+                    "maestro_junit",
+                    "maestro_debug_dir",
+                    "maestro_output_dir",
                 )
                 if k in last_run
             }
@@ -870,6 +981,10 @@ async def run_mobile_task(
             "build_id",
             "dashboard_url",
             "status",
+            "artifact_dir",
+            "maestro_junit",
+            "maestro_debug_dir",
+            "maestro_output_dir",
         )
         if k in last_run
     }

@@ -120,9 +120,28 @@ Each repair sends previous YAML + failure log (+ optional hierarchy) to the code
 
 If the case `task:` (or `mobiflow gen` argument) already looks like Maestro YAML (`appId:` + `---` or command list), it is executed as-is — no LLM re-authoring.
 
-## Artifacts
+## Artifacts & reporting
 
 Under `.mobiflow/`:
 
 - `flows/<case>.yaml` — last generated flow
+- `runs/<case>-<timestamp>/` — durable run folder (flow, Maestro debug/output, screenshots)
 - `runs/<case>-<timestamp>.json` + `<case>.latest.json` — run summary
+- `reports/<case>-<timestamp>/` — JUnit + HTML (also mirrored under the run folder)
+
+```yaml
+run:
+  save_artifacts: true
+  reports: [junit, html]       # or [] to disable
+  report_dir: .mobiflow/reports
+```
+
+| Output | Path |
+|--------|------|
+| JUnit XML | `.mobiflow/reports/<case>-<ts>/junit.xml` |
+| HTML summary | `.mobiflow/reports/<case>-<ts>/report.html` |
+| Screenshots | `.mobiflow/runs/<case>-<ts>/screenshots/` |
+| Maestro debug | `.mobiflow/runs/<case>-<ts>/attempts/01/maestro-debug/` |
+
+Local runs pass Maestro `--debug-output`, `--test-output-dir`, and `--format JUNIT`.
+Cloud runs still get MobiFlow JUnit/HTML (with dashboard link when available).
