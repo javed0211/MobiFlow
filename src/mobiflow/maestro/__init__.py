@@ -766,8 +766,15 @@ async def run_mobile_task(
     clear_state: bool = False,
     preflight: list[str] | None = None,
     app_path: str = "",
+    retries: int = 0,
+    reuse_flow_yaml: str | None = None,
+    reuse_scripts: dict[str, str] | None = None,
 ) -> dict[str, Any]:
-    """Full agent loop: preflight → explore → author YAML(+JS) → run → heal."""
+    """Full agent loop: preflight → explore → author YAML(+JS) → run → heal.
+
+    ``retries`` re-runs the same YAML before each heal. ``reuse_flow_yaml``
+    skips explore/codegen and executes the provided flow (optionally with heal).
+    """
     from mobiflow.cloud.base import is_cloud_provider
     from mobiflow.devices import ensure_device
     from mobiflow.explore import ExplorationResult, explore_app, plan_only_explore
@@ -891,9 +898,16 @@ async def run_mobile_task(
         mode="skipped",
     )
     exploration_prompt = ""
+    max_retries = max(0, min(int(retries or 0), 10))
 
+    # Frozen / reused flow — skip explore + codegen
+    if reuse_flow_yaml and looks_like_maestro_yaml(reuse_flow_yaml):
+        bundle = parse_flow_bundle(reuse_flow_yaml, app_id=app_id)
+        flow = bundle.flow_yaml
+        scripts = dict(reuse_scripts or {}) or bundle.scripts
+        _p("Reusing frozen Maestro YAML (skipped explore/codegen).")
     # Paste-to-run
-    if looks_like_maestro_yaml(goal):
+    elif looks_like_maestro_yaml(goal):
         bundle = parse_flow_bundle(goal, app_id=app_id)
         flow = bundle.flow_yaml
         scripts = bundle.scripts
@@ -1012,40 +1026,57 @@ async def run_mobile_task(
         _p(result["summary"])
         return result
 
+    heal_budget = max(0, int(heal or 0))
+    heal_round = 0
     attempt = 0
     last_run: dict[str, Any] = {}
     attempts_meta: list[dict[str, Any]] = []
-    # Cloud heal is expensive; still honor heal but hierarchy is unavailable
-    while attempt <= max(0, heal):
-        attempt += 1
-        _p(f"Device run attempt {attempt}/{max(1, heal + 1)}…")
-        attempt_dir = None
-        if run_root is not None:
-            attempt_dir = run_root / "attempts" / f"{attempt:02d}"
-            attempt_dir.mkdir(parents=True, exist_ok=True)
-        last_run = await run_flow_yaml(
-            flow,
-            device_id=selected,
-            timeout_s=timeout_s,
-            scripts=scripts,
-            progress=_p,
-            device_config=device_config,
-            platform=platform,
-            artifact_dir=attempt_dir,
-        )
-        attempts_meta.append(
-            {
-                "attempt": attempt,
-                "ok": bool(last_run.get("ok")),
-                "artifact_dir": last_run.get("artifact_dir"),
-                "error": last_run.get("error"),
-                "build_id": last_run.get("build_id"),
-                "dashboard_url": last_run.get("dashboard_url"),
-            }
-        )
-        result["attempts"] = attempts_meta
-        result["artifact_dir"] = str(run_root) if run_root else last_run.get("artifact_dir")
-        if last_run.get("ok"):
+    # Order: execute → retry N (same YAML) → heal → repeat
+    while True:
+        passed = False
+        for retry_i in range(max_retries + 1):
+            attempt += 1
+            label = f"heal {heal_round}/{heal_budget}"
+            if max_retries:
+                label += f" retry {retry_i}/{max_retries}"
+            _p(f"Device run attempt {attempt} ({label})…")
+            attempt_dir = None
+            if run_root is not None:
+                attempt_dir = run_root / "attempts" / f"{attempt:02d}"
+                attempt_dir.mkdir(parents=True, exist_ok=True)
+            last_run = await run_flow_yaml(
+                flow,
+                device_id=selected,
+                timeout_s=timeout_s,
+                scripts=scripts,
+                progress=_p,
+                device_config=device_config,
+                platform=platform,
+                artifact_dir=attempt_dir,
+            )
+            attempts_meta.append(
+                {
+                    "attempt": attempt,
+                    "heal_round": heal_round,
+                    "retry": retry_i,
+                    "ok": bool(last_run.get("ok")),
+                    "artifact_dir": last_run.get("artifact_dir"),
+                    "error": last_run.get("error"),
+                    "build_id": last_run.get("build_id"),
+                    "dashboard_url": last_run.get("dashboard_url"),
+                }
+            )
+            result["attempts"] = attempts_meta
+            result["artifact_dir"] = (
+                str(run_root) if run_root else last_run.get("artifact_dir")
+            )
+            if last_run.get("ok"):
+                passed = True
+                break
+            if retry_i < max_retries:
+                _p(f"Flow failed — retrying same YAML ({retry_i + 1}/{max_retries})…")
+
+        if passed:
             result["success"] = True
             where = f"cloud:{provider}" if cloud else "device"
             result["summary"] = f"Maestro flow passed on {where}."
@@ -1071,9 +1102,10 @@ async def run_mobile_task(
                 _p(f"Dashboard: {last_run['dashboard_url']}")
             return result
 
-        failure = (last_run.get("stderr") or "") + "\n" + (last_run.get("stdout") or "")
-        if attempt > heal:
+        if heal_round >= heal_budget:
             break
+        heal_round += 1
+        failure = (last_run.get("stderr") or "") + "\n" + (last_run.get("stdout") or "")
         _p("Flow failed — repairing with LLM…")
         hierarchy = ""
         if adaptive and not cloud:
@@ -1097,7 +1129,7 @@ async def run_mobile_task(
         result["scripts"] = scripts
 
     result["success"] = False
-    result["summary"] = "Maestro flow failed after heal attempts."
+    result["summary"] = "Maestro flow failed after retries/heal attempts."
     result["error"] = last_run.get("error") or "flow_failed"
     result["run"] = {
         k: last_run.get(k)

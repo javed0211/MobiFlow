@@ -203,7 +203,9 @@ mobiflow suite cases/ --fail-fast
 | `--tag smoke` | Only cases with `@smoke` |
 | `run.fail_fast` / `--fail-fast` | Stop after first failure |
 | `run.jobs` | Reserved for parallel suites (currently sequential) |
-| `run.retries` / `run.reuse_flow` / `run.env` | Foundations for flake control, frozen flows, secrets |
+| `run.retries` | Re-run same YAML before each heal (flake control) |
+| `run.reuse_flow` / `--reuse-flow` | Skip LLM; use `flows/<case>.yaml` or case `flow:` |
+| `run.env` | Reserved for Maestro `--env` injection |
 
 Outputs under `.mobiflow/reports/suite-<name>-<ts>/`:
 

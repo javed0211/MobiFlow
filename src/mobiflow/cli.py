@@ -393,6 +393,11 @@ def devices_cmd(
 @click.option("--gen-only", is_flag=True, help="Author YAML only (skip device run)")
 @click.option("--no-heal", is_flag=True, help="Skip YAML repair loop")
 @click.option(
+    "--reuse-flow/--no-reuse-flow",
+    default=None,
+    help="Use flows/<case>.yaml (or case flow:) instead of LLM codegen",
+)
+@click.option(
     "--tag",
     "tags",
     multiple=True,
@@ -409,6 +414,7 @@ def run_cmd(
     device_id: str | None,
     gen_only: bool,
     no_heal: bool,
+    reuse_flow: bool | None,
     tags: tuple[str, ...],
     fail_fast: bool | None,
 ) -> None:
@@ -434,6 +440,7 @@ def run_cmd(
             device_id=device_id,
             no_heal=no_heal,
             fail_fast=fail_fast,
+            reuse_flow=reuse_flow,
         )
         if not suite.success:
             sys.exit(1)
@@ -450,6 +457,7 @@ def run_cmd(
         gen_only=gen_only,
         device_id=device_id,
         no_heal=no_heal,
+        reuse_flow=reuse_flow,
     )
     if not result.get("success"):
         sys.exit(1)
@@ -467,6 +475,11 @@ def run_cmd(
 @click.option("--gen-only", is_flag=True, help="Author YAML only (skip device run)")
 @click.option("--no-heal", is_flag=True, help="Skip YAML repair loop")
 @click.option(
+    "--reuse-flow/--no-reuse-flow",
+    default=None,
+    help="Use flows/<case>.yaml instead of LLM codegen",
+)
+@click.option(
     "--tag",
     "tags",
     multiple=True,
@@ -483,6 +496,7 @@ def suite_cmd(
     device_id: str | None,
     gen_only: bool,
     no_heal: bool,
+    reuse_flow: bool | None,
     tags: tuple[str, ...],
     fail_fast: bool | None,
 ) -> None:
@@ -507,6 +521,7 @@ def suite_cmd(
         device_id=device_id,
         no_heal=no_heal,
         fail_fast=fail_fast,
+        reuse_flow=reuse_flow,
     )
     if not suite.cases:
         sys.exit(2)

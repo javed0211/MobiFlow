@@ -120,6 +120,7 @@ def run_suite(
     no_heal: bool = False,
     fail_fast: bool | None = None,
     suite_name: str | None = None,
+    reuse_flow: bool | None = None,
 ) -> SuiteResult:
     """Discover and run cases under ``target`` (file or directory)."""
     path = Path(target).expanduser().resolve()
@@ -162,6 +163,7 @@ def run_suite(
                 gen_only=gen_only,
                 device_id=device_id,
                 no_heal=no_heal,
+                reuse_flow=reuse_flow,
             )
         except Exception as exc:
             logger.exception("Suite case failed: %s", case.name)

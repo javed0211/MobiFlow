@@ -36,6 +36,43 @@ def _write_scripts(flow_dir: Path, scripts: dict[str, str]) -> list[Path]:
     return written
 
 
+def resolve_reuse_flow_path(
+    case: Any,
+    cfg: MobiflowConfig,
+    *,
+    reuse_flow: bool | None = None,
+) -> Path | None:
+    """Return a frozen YAML path from case.flow or flows/<case>.yaml when enabled."""
+    if case.flow:
+        p = Path(case.flow).expanduser()
+        if not p.is_absolute():
+            p = cfg.repo_path() / p
+        return p.resolve() if p.is_file() else None
+    want = cfg.run.reuse_flow if reuse_flow is None else reuse_flow
+    if not want:
+        return None
+    candidate = cfg.flow_dir_path() / f"{case.name}.yaml"
+    return candidate if candidate.is_file() else None
+
+
+def _load_companion_scripts(flow_path: Path, cfg: MobiflowConfig) -> dict[str, str]:
+    scripts: dict[str, str] = {}
+    # Prefer scripts next to the flow, then stack.scripts_dir
+    for root in (flow_path.parent, cfg.scripts_dir_path(), cfg.flow_dir_path()):
+        scripts_dir = root / "scripts" if (root / "scripts").is_dir() else root
+        if not scripts_dir.is_dir():
+            continue
+        for js in scripts_dir.rglob("*.js"):
+            try:
+                rel = js.relative_to(flow_path.parent)
+            except ValueError:
+                rel = Path("scripts") / js.name
+            key = str(rel).replace("\\", "/")
+            if key not in scripts:
+                scripts[key] = js.read_text(encoding="utf-8")
+    return scripts
+
+
 def run_pipeline(
     case_file: Path | str,
     cfg: MobiflowConfig,
@@ -43,6 +80,7 @@ def run_pipeline(
     gen_only: bool = False,
     device_id: str | None = None,
     no_heal: bool = False,
+    reuse_flow: bool | None = None,
 ) -> dict[str, Any]:
     case = load_case(case_file)
     flow_dir = cfg.flow_dir_path()
@@ -76,6 +114,21 @@ def run_pipeline(
         f"lang={cfg.stack.language}"
     )
 
+    reuse_path = None if gen_only else resolve_reuse_flow_path(
+        case, cfg, reuse_flow=reuse_flow
+    )
+    reuse_yaml = None
+    reuse_scripts: dict[str, str] = {}
+    if reuse_path is not None:
+        reuse_yaml = reuse_path.read_text(encoding="utf-8")
+        reuse_scripts = _load_companion_scripts(reuse_path, cfg)
+        console.print(f"  [cyan]reuse-flow[/cyan] {reuse_path}")
+    elif (reuse_flow or cfg.run.reuse_flow) and not case.flow and not gen_only:
+        console.print(
+            f"  [yellow]reuse-flow requested but no YAML at "
+            f"{cfg.flow_dir_path() / (case.name + '.yaml')} — generating[/yellow]"
+        )
+
     import asyncio
 
     run_timeout = max(cfg.run.timeout_s, cfg.device.boot_timeout_s)
@@ -100,7 +153,7 @@ def run_pipeline(
             device_id=selected_device,
             heal=0 if (no_heal or gen_only) else cfg.run.heal,
             adaptive=cfg.run.adaptive and not gen_only,
-            explore=cfg.run.explore and not gen_only,
+            explore=cfg.run.explore and not gen_only and reuse_yaml is None,
             explore_steps=cfg.run.explore_steps,
             timeout_s=run_timeout,
             live=not gen_only,
@@ -112,6 +165,9 @@ def run_pipeline(
             clear_state=bool(case.clear_state),
             preflight=list(cfg.run.preflight or []),
             app_path=cfg.device.app_path or "",
+            retries=0 if gen_only else cfg.run.retries,
+            reuse_flow_yaml=reuse_yaml,
+            reuse_scripts=reuse_scripts or None,
         )
     )
     duration_s = time.monotonic() - t0
