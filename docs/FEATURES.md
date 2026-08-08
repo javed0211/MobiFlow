@@ -132,6 +132,31 @@ run:
 
 Exploration is saved to `.mobiflow/runs/<case>-<ts>/exploration.json`.
 
+## Interactive explore (separate mode)
+
+`mobiflow run` always explores **automatically** (when enabled). For an operator-driven
+session, use a separate command:
+
+```bash
+# LLM proposes each tap/scroll; you Accept / Edit / Skip / Done / Quit
+mobiflow explore "Open Settings → Network" --interactive
+
+# Same, but auto-accept every discovery action
+mobiflow explore "…" --auto
+
+# Explore then codegen YAML (does not run the final test)
+mobiflow explore "…" --interactive --gen --out flows/network.yaml
+```
+
+| Mode | Command | Who decides each step |
+|------|---------|------------------------|
+| Automatic (in `run`) | `mobiflow run …` | Discovery LLM, no prompts |
+| Interactive session | `mobiflow explore --interactive` | You confirm each proposed action |
+| Maestro Studio UI | `mobiflow studio` | Official Maestro interactive UI (local only) |
+
+Interactive explore is **local-device only**. Cloud providers fall back to plan-only explore.
+It does **not** launch Maestro Studio — that is `mobiflow studio`.
+
 ## Heal loop
 
 `run.heal` (default `2`) = number of repair attempts after a failed `maestro test`.

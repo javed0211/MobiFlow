@@ -119,9 +119,11 @@ task: Open Wikipedia, dismiss onboarding, confirm Search is visible
 |---------|----------|
 | `mobiflow init` | Wizard / non-interactive scaffold (+ optional deps install) |
 | `mobiflow setup` | Detect / auto-install missing Maestro, JDK, pip packages |
-| `mobiflow run <case.txt>` | LLM → YAML → device (+ heal) |
+| `mobiflow run <case.txt>` | Explore → LLM YAML → device (+ heal) |
 | `mobiflow run <case.txt> --gen-only` | Author YAML only |
 | `mobiflow gen "Open Settings…"` | One-shot NL → YAML |
+| `mobiflow explore "…" [--interactive]` | Discovery session (confirm each action with `--interactive`) |
+| `mobiflow studio` | Open Maestro Studio (local device UI) |
 | `mobiflow test-flow flows/foo.yaml` | Run existing YAML |
 | `mobiflow status` / `devices` | Maestro + local devices + cloud lab readiness |
 | `mobiflow devices --start` | Auto-start Android AVD (Win/Mac) or Xcode sim (Mac) |

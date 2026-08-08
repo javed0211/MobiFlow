@@ -355,6 +355,10 @@ async def plan_only_explore(
     return result
 
 
+# Interactive decision: accept | skip | edit | done | quit
+AskFn = Callable[[dict[str, Any]], dict[str, Any]]
+
+
 async def explore_app(
     goal: str,
     *,
@@ -365,8 +369,15 @@ async def explore_app(
     max_steps: int = 5,
     step_timeout_s: int = 90,
     progress: ProgressFn = None,
+    interactive: bool = False,
+    ask: AskFn | None = None,
 ) -> ExplorationResult:
-    """Live explore loop: hierarchy → discovery decision → optional nav action."""
+    """Live explore loop: hierarchy → discovery decision → optional nav action.
+
+    When ``interactive=True``, each proposed action is confirmed via ``ask``
+    (or a default stdin prompt). Choices: accept | skip | edit | done | quit.
+    This is a separate operator-driven mode — not Maestro Studio.
+    """
     from mobiflow.maestro import fetch_hierarchy, resolve_app_id, run_flow_yaml
 
     resolved = resolve_app_id(app_id, platform, goal)
@@ -374,10 +385,11 @@ async def explore_app(
         goal=goal,
         app_id=resolved,
         platform=platform,
-        mode="device",
+        mode="interactive" if interactive else "device",
     )
     history: list[str] = []
     max_steps = max(1, min(int(max_steps or 5), 12))
+    ask_fn = ask or (default_interactive_ask if interactive else None)
 
     if progress:
         progress(f"Explore: launching {resolved}…")
@@ -428,7 +440,29 @@ async def explore_app(
             action=decision.get("action"),
         )
 
+        # Model thinks we're done
         if decision.get("status") == "done" or not decision.get("action"):
+            if interactive and ask_fn is not None and decision.get("status") == "done":
+                choice = ask_fn(
+                    {
+                        "kind": "done_proposal",
+                        "step": i,
+                        "max_steps": max_steps,
+                        "decision": decision,
+                        "hierarchy_excerpt": step.hierarchy_excerpt,
+                    }
+                )
+                selected = str(choice.get("choice") or "done").lower()
+                if selected == "quit":
+                    result.notes.append("interactive: quit by operator")
+                    result.steps.append(step)
+                    break
+                if selected == "skip":
+                    # Operator wants to keep exploring despite model done
+                    history.append("operator: continue after model done")
+                    step.action = None
+                    result.steps.append(step)
+                    continue
             step.action = None
             result.steps.append(step)
             result.completed = True
@@ -437,6 +471,47 @@ async def explore_app(
             break
 
         action: ExploreAction = decision["action"]
+
+        if interactive and ask_fn is not None:
+            choice = ask_fn(
+                {
+                    "kind": "action_proposal",
+                    "step": i,
+                    "max_steps": max_steps,
+                    "decision": decision,
+                    "action": action,
+                    "hierarchy_excerpt": step.hierarchy_excerpt,
+                }
+            )
+            selected = str(choice.get("choice") or "accept").lower()
+            if selected == "quit":
+                result.notes.append("interactive: quit by operator")
+                result.steps.append(step)
+                break
+            if selected == "done":
+                step.action = None
+                result.steps.append(step)
+                result.completed = True
+                if progress:
+                    progress("Explore stopped by operator — ready for codegen.")
+                break
+            if selected == "skip":
+                history.append(
+                    f"operator skipped {action.command}:{action.text}"
+                )
+                step.action = None
+                step.notes = (step.notes + " | skipped by operator").strip(" |")
+                result.steps.append(step)
+                continue
+            if selected == "edit":
+                edited = choice.get("action") or {}
+                action = ExploreAction(
+                    command=str(edited.get("command") or action.command),
+                    text=str(edited.get("text") if "text" in edited else action.text),
+                    optional=bool(edited.get("optional", action.optional)),
+                )
+                step.action = action
+
         if progress:
             progress(
                 f"Explore step {i}/{max_steps}: {action.command} "
@@ -454,7 +529,6 @@ async def explore_app(
             + ("ok" if step.action_ok else f"fail:{run.get('error')}")
         )
         result.steps.append(step)
-        # brief pause for UI settle is handled by maestro waits when present
     else:
         result.completed = bool(result.plan or result.selectors)
 
@@ -466,3 +540,75 @@ async def explore_app(
             if s.observation
         ][:8]
     return result
+
+
+def default_interactive_ask(payload: dict[str, Any]) -> dict[str, Any]:
+    """Stdin/questionary prompt used by ``mobiflow explore --interactive``."""
+    import questionary
+
+    kind = payload.get("kind")
+    decision = payload.get("decision") or {}
+    step = payload.get("step")
+    max_steps = payload.get("max_steps")
+    print()
+    print(f"— Explore {step}/{max_steps} —")
+    if decision.get("screen"):
+        print(f"Screen: {decision.get('screen')}")
+    if decision.get("observation"):
+        print(f"See:    {decision.get('observation')}")
+    if decision.get("notes"):
+        print(f"Notes:  {decision.get('notes')}")
+    plan = decision.get("plan") or []
+    if plan:
+        print("Plan:   " + " → ".join(plan[-4:]))
+
+    if kind == "done_proposal":
+        choice = questionary.select(
+            "Discovery thinks exploration is complete. What next?",
+            choices=[
+                questionary.Choice("Finish explore (use plan for codegen)", value="done"),
+                questionary.Choice("Keep exploring", value="skip"),
+                questionary.Choice("Quit", value="quit"),
+            ],
+            default="done",
+        ).ask()
+        return {"choice": choice or "done"}
+
+    action: ExploreAction | None = payload.get("action")
+    label = (
+        f"{action.command} {action.text}".strip()
+        if action
+        else "(no action)"
+    )
+    choice = questionary.select(
+        f"Proposed action: {label}",
+        choices=[
+            questionary.Choice("Accept & run on device", value="accept"),
+            questionary.Choice("Edit action text, then run", value="edit"),
+            questionary.Choice("Skip this action", value="skip"),
+            questionary.Choice("Finish explore now", value="done"),
+            questionary.Choice("Quit", value="quit"),
+        ],
+        default="accept",
+    ).ask()
+    if not choice:
+        return {"choice": "quit"}
+    if choice != "edit" or action is None:
+        return {"choice": choice}
+
+    new_cmd = questionary.text(
+        "Command (tapOn/scroll/inputText/pressKey/…):",
+        default=action.command,
+    ).ask()
+    new_text = questionary.text(
+        "Text / selector / value:",
+        default=action.text or "",
+    ).ask()
+    return {
+        "choice": "edit",
+        "action": {
+            "command": (new_cmd or action.command).strip(),
+            "text": (new_text if new_text is not None else action.text),
+            "optional": action.optional,
+        },
+    }

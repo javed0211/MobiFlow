@@ -478,6 +478,245 @@ def gen_cmd(
             console.print(f"\n[bold]// {rel}[/bold]\n{body}")
 
 
+@main.command("explore")
+@click.argument("goal", required=False, default=None)
+@click.option("--repo", default=None, help="Project path")
+@click.option("--device", "device_id", default=None, help="adb serial / UDID")
+@click.option("--platform", default=None, help="android|ios")
+@click.option("--app-id", "app_id", default=None, help="Maestro appId")
+@click.option(
+    "--interactive/--auto",
+    default=False,
+    help="Confirm each discovery action (separate interactive session mode)",
+)
+@click.option("--steps", default=None, type=int, help="Max explore steps (default from config)")
+@click.option(
+    "--gen/--no-gen",
+    default=False,
+    help="After explore, run codegen and print/write YAML",
+)
+@click.option(
+    "--out",
+    "out_path",
+    default=None,
+    type=click.Path(dir_okay=False),
+    help="With --gen, write YAML to this path",
+)
+@click.option("--case", "case_file", default=None, type=click.Path(exists=True, dir_okay=False),
+              help="Load goal/appId/platform from a case file")
+def explore_cmd(
+    goal: str | None,
+    repo: str | None,
+    device_id: str | None,
+    platform: str | None,
+    app_id: str | None,
+    interactive: bool,
+    steps: int | None,
+    gen: bool,
+    out_path: str | None,
+    case_file: str | None,
+) -> None:
+    """Explore an app with the discovery LLM (auto or interactive).
+
+    Separate from ``mobiflow run``: does not execute the final test unless
+    you pass ``--gen`` (codegen only) or use ``run`` afterward.
+
+    Interactive mode prompts Accept / Edit / Skip / Done for each proposed
+    Maestro action. It does not start Maestro Studio (see ``mobiflow studio``).
+    """
+    import json
+    from datetime import UTC, datetime
+
+    from mobiflow.cases import load_case
+    from mobiflow.devices import ensure_device
+    from mobiflow.explore import explore_app, plan_only_explore
+    from mobiflow.maestro import generate_flow_bundle
+
+    cfg = _load_config_or_exit(repo)
+    _print_warnings(cfg)
+
+    case_goal = ""
+    if case_file:
+        case = load_case(case_file)
+        case_goal = case.explore_task()
+        app_id = app_id or case.app_id or cfg.device.app_id
+        platform = platform or case.platform or cfg.device.platform
+        device_id = device_id or case.device_id or cfg.device.device_id
+    else:
+        app_id = app_id or cfg.device.app_id
+        platform = platform or cfg.device.platform
+        device_id = device_id or cfg.device.device_id
+
+    goal_text = (goal or case_goal or "").strip()
+    if not goal_text:
+        console.print("[red]Provide a goal argument or --case file.[/red]")
+        sys.exit(1)
+
+    if cfg.device.is_cloud():
+        console.print(
+            "[yellow]Explore interactive/live device mode is local-only. "
+            "Using plan-only explore for cloud provider.[/yellow]"
+        )
+
+    max_steps = steps if steps is not None else cfg.run.explore_steps
+
+    def progress(msg: str) -> None:
+        console.print(f"  [dim]→[/dim] {msg}")
+
+    async def _run():
+        if cfg.device.is_cloud():
+            return await plan_only_explore(
+                goal=goal_text,
+                app_id=app_id or "",
+                platform=platform or "android",
+                profile=cfg.discovery_profile(),
+                progress=progress,
+            )
+
+        ensured = await ensure_device(
+            platform_pref=platform or "android",
+            device_id=device_id,
+            auto_start=cfg.device.auto_start,
+            timeout_s=float(cfg.device.boot_timeout_s),
+            progress=progress,
+        )
+        if not ensured.get("ok") or not ensured.get("device"):
+            console.print(
+                f"[yellow]{ensured.get('message') or 'No device'} — plan-only explore.[/yellow]"
+            )
+            return await plan_only_explore(
+                goal=goal_text,
+                app_id=app_id or "",
+                platform=platform or "android",
+                profile=cfg.discovery_profile(),
+                progress=progress,
+            )
+        selected = ensured["device"].get("id") or device_id
+        if interactive:
+            console.print(
+                "[bold]Interactive explore[/bold] — confirm each discovery action. "
+                "Maestro Studio is separate: [cyan]mobiflow studio[/cyan]"
+            )
+        return await explore_app(
+            goal_text,
+            app_id=app_id or "",
+            platform=platform or "android",
+            device_id=str(selected),
+            profile=cfg.discovery_profile(),
+            max_steps=max_steps,
+            progress=progress,
+            interactive=interactive,
+        )
+
+    exploration = asyncio.run(_run())
+
+    console.print(
+        f"\n[bold]Exploration[/bold] mode={exploration.mode}  "
+        f"completed={exploration.completed}  steps={len(exploration.steps)}"
+    )
+    if exploration.plan:
+        console.print("[bold]Plan[/bold]")
+        for i, step in enumerate(exploration.plan, 1):
+            console.print(f"  {i}. {step}")
+    if exploration.selectors:
+        console.print("[bold]Selectors[/bold]")
+        for sel in exploration.selectors[:20]:
+            console.print(
+                f"  · {sel.get('label') or '-'} → {sel.get('text') or '-'}"
+            )
+
+    art = cfg.artifacts_dir() / "explore"
+    art.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+    out_json = art / f"explore-{stamp}.json"
+    out_json.write_text(
+        json.dumps(exploration.to_dict(), indent=2) + "\n", encoding="utf-8"
+    )
+    console.print(f"[dim]Saved → {out_json}[/dim]")
+
+    if not gen:
+        return
+
+    def progress_gen(msg: str) -> None:
+        console.print(f"  [dim]→[/dim] {msg}")
+
+    bundle = asyncio.run(
+        generate_flow_bundle(
+            goal_text,
+            app_id=app_id or exploration.app_id,
+            platform=platform or exploration.platform,
+            profile=cfg.codegen_profile(),
+            hierarchy=exploration.final_hierarchy,
+            exploration=exploration.to_prompt_block(),
+            allow_js=cfg.stack.js_enabled(),
+            progress=progress_gen,
+        )
+    )
+    if out_path:
+        p = Path(out_path).expanduser().resolve()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(bundle.flow_yaml, encoding="utf-8")
+        console.print(f"[green]Wrote[/green] {p}")
+    else:
+        console.print("\n[bold]Generated flow[/bold]\n")
+        console.print(bundle.flow_yaml)
+
+
+@main.command("studio")
+@click.option("--repo", default=None, help="Project path")
+@click.option("--device", "device_id", default=None, help="adb serial / UDID")
+def studio_cmd(repo: str | None, device_id: str | None) -> None:
+    """Open Maestro Studio (official interactive UI) for a local device.
+
+    This is separate from ``mobiflow explore --interactive`` (LLM-guided
+    confirmations in the terminal).
+    """
+    import os
+    import subprocess
+
+    from mobiflow.maestro import resolve_java_home, resolve_maestro_binary
+
+    cfg = None
+    try:
+        cfg = _load_config_or_exit(repo)
+        device_id = device_id or cfg.device.device_id
+        if cfg.device.is_cloud():
+            console.print(
+                "[red]Maestro Studio requires a local device "
+                "(device.provider=local).[/red]"
+            )
+            sys.exit(1)
+    except SystemExit:
+        if repo:
+            raise
+
+    binary = resolve_maestro_binary()
+    if not binary:
+        console.print(
+            "[red]Maestro CLI not found.[/red] Install: "
+            "curl -Ls https://get.maestro.mobile.dev | bash"
+        )
+        sys.exit(1)
+
+    args = [binary, "studio"]
+    if device_id:
+        args.extend(["--device", device_id])
+
+    env = dict(os.environ)
+    env.setdefault("MAESTRO_CLI_NO_ANALYTICS", "1")
+    jh = resolve_java_home()
+    if jh:
+        env.setdefault("JAVA_HOME", jh)
+    env["PATH"] = str(Path(binary).parent) + os.pathsep + env.get("PATH", "")
+
+    console.print(f"[dim]Launching:[/dim] {' '.join(args)}")
+    try:
+        raise SystemExit(subprocess.call(args, env=env))
+    except FileNotFoundError:
+        console.print(f"[red]Failed to launch[/red] {binary}")
+        sys.exit(1)
+
+
 @main.command("test-flow")
 @click.argument("flow_file", type=click.Path(exists=True, dir_okay=False))
 @click.option("--device", "device_id", default=None, help="Local device id or cloud device name")
