@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "models": {
+    "openai-gpt4o": {
+      "provider": "openai",
+      "model": "gpt-4o",
+      "api_key_env": "OPENAI_API_KEY",
+      "label": "OpenAI GPT-4o"
+    },
+    "azure-gpt4o": {
+      "provider": "azure",
+      "model": "gpt-4o",
+      "deployment": "gpt-4o",
+      "api_key_env": "AZURE_OPENAI_API_KEY",
+      "endpoint_env": "AZURE_OPENAI_ENDPOINT",
+      "api_version": "2025-03-01-preview",
+      "label": "Azure OpenAI GPT-4o"
+    },
+    "anthropic-sonnet": {
+      "provider": "anthropic",
+      "model": "claude-sonnet-4-6",
+      "api_key_env": "ANTHROPIC_API_KEY",
+      "label": "Anthropic Claude Sonnet"
+    },
+    "google-gemini-flash": {
+      "provider": "google",
+      "model": "gemini-2.0-flash",
+      "api_key_env": "GOOGLE_API_KEY",
+      "label": "Google Gemini 2.0 Flash"
+    }
+  }
+}

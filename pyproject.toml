@@ -1,0 +1,41 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "mobiflow"
+version = "0.1.0"
+description = "CLI: NL → Maestro mobile flows via LLM, run on device/emulator, self-heal before you commit."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
+authors = [{ name = "QubiQ Labs", email = "labs@qubiq.ai" }]
+dependencies = [
+    "click>=8.1",
+    "questionary>=2.0",
+    "rich>=13.0",
+    "pyyaml>=6.0",
+    "pydantic>=2.5",
+    "openai>=1.40",
+    "httpx>=0.27",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "ruff>=0.5"]
+anthropic = ["anthropic>=0.40"]
+
+[project.scripts]
+mobiflow = "mobiflow.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mobiflow"]
+
+[tool.hatch.build.targets.wheel.sources]
+"src/mobiflow" = "mobiflow"
+
+[tool.hatch.build.targets.sdist]
+include = ["src/mobiflow", "docs", "README.md", "pyproject.toml", "cases", "flows"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

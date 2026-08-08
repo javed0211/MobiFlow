@@ -1,0 +1,36 @@
+# mobiflow.config.yaml — pick models from llm.json
+#
+#   cp mobiflow.config.example.yaml mobiflow.config.yaml
+#   cp llm.json.example llm.json
+#
+# Secrets stay in env vars (never paste API keys here).
+
+project:
+  mode: local
+  path: .
+
+llm:
+  catalog: llm.json
+  discovery: openai-gpt4o      # adaptive explore / plan on device
+  codegen: openai-gpt4o        # Maestro YAML authoring — can differ from discovery
+
+stack:
+  tool: maestro
+  language: yaml+js            # yaml | yaml+js (Maestro GraalJS: evalScript / runScript)
+  runner: maestro
+  flow_dir: flows
+  scripts_dir: flows/scripts   # companion .js files
+  cases_dir: cases
+
+device:
+  platform: android
+  app_id: ""                   # e.g. org.wikipedia — or set per case
+  device_id: ""                # adb serial | AVD name | iOS UDID | empty=auto
+  auto_start: true             # start Android AVD (Win/Mac) or Xcode sim (Mac) if none online
+  boot_timeout_s: 120
+
+run:
+  heal: 2                      # YAML repair attempts (0 = off)
+  adaptive: true               # use view hierarchy when device is live
+  timeout_s: 180
+  save_artifacts: true
