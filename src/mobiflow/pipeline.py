@@ -277,6 +277,12 @@ def run_pipeline(
         console.print(f"[dim]Artifacts → {run_artifact_dir}[/dim]")
         result["reports"] = reports_written
         result["artifact_dir"] = str(run_artifact_dir)
+        result["screenshots"] = screenshot_rels
+
+    result["duration_s"] = duration_s
+    result["started_at"] = started_at
+    result["flow_path"] = str(out_flow) if flow_yaml else str(result.get("flow_path") or "")
+    result["case"] = case.name
 
     ok = bool(result.get("success"))
     if ok:

@@ -174,6 +174,12 @@ class RunConfig(BaseModel):
     # Reporting: junit | html (comma-string or list). Empty / none disables.
     reports: list[str] = Field(default_factory=lambda: ["junit", "html"])
     report_dir: str = ".mobiflow/reports"  # relative to project path
+    # Completeness foundations (suite / flake / reuse / secrets — wired in later phases)
+    retries: int = 0  # re-run same YAML on failure before heal
+    reuse_flow: bool = False  # prefer flows/<case>.yaml over LLM codegen
+    fail_fast: bool = False  # suite: stop after first failing case
+    jobs: int = 1  # suite parallelism (1 = sequential)
+    env: dict[str, str] = Field(default_factory=dict)  # Maestro --env KEY=VALUE
 
     @field_validator("reports", mode="before")
     @classmethod
@@ -190,6 +196,39 @@ class RunConfig(BaseModel):
         except (TypeError, ValueError):
             return 5
         return max(1, min(n, 12))
+
+    @field_validator("retries")
+    @classmethod
+    def _clamp_retries(cls, v: int) -> int:
+        try:
+            n = int(v)
+        except (TypeError, ValueError):
+            return 0
+        return max(0, min(n, 10))
+
+    @field_validator("jobs")
+    @classmethod
+    def _clamp_jobs(cls, v: int) -> int:
+        try:
+            n = int(v)
+        except (TypeError, ValueError):
+            return 1
+        return max(1, min(n, 32))
+
+    @field_validator("env", mode="before")
+    @classmethod
+    def _coerce_env(cls, v: Any) -> dict[str, str]:
+        if v is None:
+            return {}
+        if not isinstance(v, dict):
+            raise ValueError("run.env must be a mapping of KEY: VALUE")
+        out: dict[str, str] = {}
+        for key, val in v.items():
+            k = str(key).strip()
+            if not k:
+                continue
+            out[k] = "" if val is None else str(val)
+        return out
 
 
 class ProjectConfig(BaseModel):
@@ -355,6 +394,10 @@ def render_simple_config(config: MobiflowConfig) -> str:
         f"  save_artifacts: {str(run.save_artifacts).lower()}",
         f"  reports: [{', '.join(run.reports) if run.reports else ''}]   # junit, html — empty disables",
         f"  report_dir: {run.report_dir}",
+        f"  retries: {run.retries}       # re-run same YAML before heal (flake control)",
+        f"  reuse_flow: {str(run.reuse_flow).lower()}  # use flows/<case>.yaml instead of LLM",
+        f"  fail_fast: {str(run.fail_fast).lower()}   # suite: stop on first failure",
+        f"  jobs: {run.jobs}           # suite parallelism (1 = sequential)",
         "",
         "# Edit llm.json to add Azure / OpenAI / Anthropic / Google models.",
         "# Then change discovery: / codegen: above to the profile ids you want.",

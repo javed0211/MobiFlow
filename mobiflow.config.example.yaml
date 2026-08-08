@@ -52,3 +52,7 @@ run:
   save_artifacts: true
   reports: [junit, html]       # junit, html — set [] to disable
   report_dir: .mobiflow/reports
+  retries: 0                   # re-run same YAML before heal (flake control)
+  reuse_flow: false            # use flows/<case>.yaml instead of LLM
+  fail_fast: false             # suite: stop on first failure
+  jobs: 1                      # suite parallelism (1 = sequential)

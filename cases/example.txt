@@ -1,5 +1,8 @@
 # Intent-style mobile case — copy to make new ones
+@smoke
 appId: org.wikipedia
 platform: android
 task: Open the Wikipedia app, dismiss any onboarding, and confirm Search is visible
 # device: emulator-5554
+# flow: flows/example.yaml
+# clearState: false

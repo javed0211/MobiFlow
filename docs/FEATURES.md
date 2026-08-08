@@ -162,6 +162,36 @@ It does **not** launch Maestro Studio — that is `mobiflow studio`.
 `run.heal` (default `2`) = number of repair attempts after a failed `maestro test`.
 Each repair sends previous YAML + failure log (+ optional hierarchy) + exploration context to the codegen model.
 
+## Suite runner
+
+Run a directory of cases and get one aggregate report:
+
+```bash
+mobiflow run cases/ --tag smoke
+mobiflow suite                    # defaults to stack.cases_dir
+mobiflow suite cases/ --fail-fast
+```
+
+| Flag / config | Behavior |
+|---------------|----------|
+| `--tag smoke` | Only cases with `@smoke` |
+| `run.fail_fast` / `--fail-fast` | Stop after first failure |
+| `run.jobs` | Reserved for parallel suites (currently sequential) |
+| `run.retries` / `run.reuse_flow` / `run.env` | Foundations for flake control, frozen flows, secrets |
+
+Outputs under `.mobiflow/reports/suite-<name>-<ts>/`:
+
+- `junit.xml` — multi-testcase JUnit
+- `report.html` — suite index
+- `suite.json` + `suite.latest.json`
+
+## CI
+
+`.github/workflows/ci.yml` runs lint + unit tests on every PR. An optional
+`cloud-suite` job runs when repository variable `MOBIFLOW_CLOUD_CI=true` and
+uploads `.mobiflow/reports/` as an artifact. Configure cloud + LLM secrets in
+the repo settings.
+
 ## Gen-only
 
 `mobiflow run cases/foo.txt --gen-only` or `mobiflow gen "…"` authors YAML without touching the device.

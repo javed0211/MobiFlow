@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install package
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Lint
+        run: ruff check src tests
+
+      - name: Unit tests
+        run: pytest -q
+
+      - name: CLI smoke
+        run: |
+          mobiflow --help
+          mobiflow suite --help
+          mobiflow run --help
+
+  # Opt-in cloud suite: set repository variable MOBIFLOW_CLOUD_CI=true and
+  # configure BrowserStack/TestMu + LLM secrets. Uploads .mobiflow/reports/.
+  cloud-suite:
+    if: ${{ vars.MOBIFLOW_CLOUD_CI == 'true' }}
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install package
+        run: pip install -e .
+
+      - name: Run smoke suite (cloud)
+        env:
+          BROWSERSTACK_USERNAME: ${{ secrets.BROWSERSTACK_USERNAME }}
+          BROWSERSTACK_ACCESS_KEY: ${{ secrets.BROWSERSTACK_ACCESS_KEY }}
+          TESTMU_USERNAME: ${{ secrets.TESTMU_USERNAME }}
+          TESTMU_ACCESS_KEY: ${{ secrets.TESTMU_ACCESS_KEY }}
+          MOBIFLOW_LLM_API_KEY: ${{ secrets.MOBIFLOW_LLM_API_KEY }}
+        run: |
+          if [ ! -f mobiflow.config.yaml ]; then
+            echo "No mobiflow.config.yaml — skipping cloud suite"
+            exit 0
+          fi
+          mobiflow suite --tag smoke --fail-fast
+
+      - name: Upload suite reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mobiflow-suite-reports
+          path: .mobiflow/reports/
+          if-no-files-found: ignore

@@ -120,6 +120,8 @@ task: Open Wikipedia, dismiss onboarding, confirm Search is visible
 | `mobiflow init` | Wizard / non-interactive scaffold (+ optional deps install) |
 | `mobiflow setup` | Detect / auto-install missing Maestro, JDK, pip packages |
 | `mobiflow run <case.txt>` | Explore → LLM YAML → device (+ heal) |
+| `mobiflow run cases/ [--tag smoke]` | Suite: all (or tagged) cases + aggregate JUnit/HTML |
+| `mobiflow suite [cases/]` | Same as `run` on a directory (defaults to `cases/`) |
 | `mobiflow run <case.txt> --gen-only` | Author YAML only |
 | `mobiflow gen "Open Settings…"` | One-shot NL → YAML |
 | `mobiflow explore "…" [--interactive]` | Discovery session (confirm each action with `--interactive`) |
@@ -148,6 +150,10 @@ run:
   reports: [junit, html]
   report_dir: .mobiflow/reports
 ```
+
+Suites write aggregate reports under `.mobiflow/reports/suite-<name>-<ts>/`.
+GitHub Actions (`.github/workflows/ci.yml`) runs lint + unit tests; set
+`MOBIFLOW_CLOUD_CI=true` plus cloud/LLM secrets for an optional smoke suite job.
 
 ## Cloud device labs
 

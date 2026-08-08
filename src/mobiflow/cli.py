@@ -387,31 +387,130 @@ def devices_cmd(
 
 
 @main.command("run")
-@click.argument("case_file", type=click.Path(exists=True, dir_okay=False))
+@click.argument("case_path", type=click.Path(exists=True))
 @click.option("--repo", default=None, help="Project path containing mobiflow.config.yaml")
 @click.option("--device", "device_id", default=None, help="Override device id")
 @click.option("--gen-only", is_flag=True, help="Author YAML only (skip device run)")
 @click.option("--no-heal", is_flag=True, help="Skip YAML repair loop")
+@click.option(
+    "--tag",
+    "tags",
+    multiple=True,
+    help="Suite only: include cases with this @tag (repeatable)",
+)
+@click.option(
+    "--fail-fast/--no-fail-fast",
+    default=None,
+    help="Suite only: stop after first failure (default: run.fail_fast)",
+)
 def run_cmd(
-    case_file: str,
+    case_path: str,
     repo: str | None,
     device_id: str | None,
     gen_only: bool,
     no_heal: bool,
+    tags: tuple[str, ...],
+    fail_fast: bool | None,
 ) -> None:
-    """Run a case: LLM → Maestro YAML → device (with optional heal)."""
+    """Run a case file, or a directory of cases as a suite.
+
+    Examples::
+
+        mobiflow run cases/example.txt
+        mobiflow run cases/ --tag smoke
+    """
     from mobiflow.pipeline import run_pipeline
+    from mobiflow.suite import run_suite
 
     cfg = _load_config_or_exit(repo)
     _print_warnings(cfg)
+    path = Path(case_path)
+    if path.is_dir():
+        suite = run_suite(
+            path,
+            cfg,
+            tags=list(tags) or None,
+            gen_only=gen_only,
+            device_id=device_id,
+            no_heal=no_heal,
+            fail_fast=fail_fast,
+        )
+        if not suite.success:
+            sys.exit(1)
+        return
+
+    if tags:
+        console.print(
+            "[yellow]--tag is ignored for a single case file "
+            "(use a cases/ directory).[/yellow]"
+        )
     result = run_pipeline(
-        case_file,
+        path,
         cfg,
         gen_only=gen_only,
         device_id=device_id,
         no_heal=no_heal,
     )
     if not result.get("success"):
+        sys.exit(1)
+
+
+@main.command("suite")
+@click.argument(
+    "cases_path",
+    required=False,
+    default=None,
+    type=click.Path(exists=True),
+)
+@click.option("--repo", default=None, help="Project path containing mobiflow.config.yaml")
+@click.option("--device", "device_id", default=None, help="Override device id")
+@click.option("--gen-only", is_flag=True, help="Author YAML only (skip device run)")
+@click.option("--no-heal", is_flag=True, help="Skip YAML repair loop")
+@click.option(
+    "--tag",
+    "tags",
+    multiple=True,
+    help="Include cases with this @tag (repeatable)",
+)
+@click.option(
+    "--fail-fast/--no-fail-fast",
+    default=None,
+    help="Stop after first failure (default: run.fail_fast)",
+)
+def suite_cmd(
+    cases_path: str | None,
+    repo: str | None,
+    device_id: str | None,
+    gen_only: bool,
+    no_heal: bool,
+    tags: tuple[str, ...],
+    fail_fast: bool | None,
+) -> None:
+    """Run a suite of cases and write aggregate JUnit/HTML reports.
+
+    Defaults to ``stack.cases_dir`` when no path is given. Equivalent to
+    ``mobiflow run <dir>``.
+    """
+    from mobiflow.suite import run_suite
+
+    cfg = _load_config_or_exit(repo)
+    _print_warnings(cfg)
+    target = Path(cases_path) if cases_path else cfg.cases_dir_path()
+    if not target.exists():
+        console.print(f"[red]Cases path not found:[/red] {target}")
+        sys.exit(1)
+    suite = run_suite(
+        target,
+        cfg,
+        tags=list(tags) or None,
+        gen_only=gen_only,
+        device_id=device_id,
+        no_heal=no_heal,
+        fail_fast=fail_fast,
+    )
+    if not suite.cases:
+        sys.exit(2)
+    if not suite.success:
         sys.exit(1)
 
 

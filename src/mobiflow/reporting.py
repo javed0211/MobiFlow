@@ -373,6 +373,259 @@ def write_run_reports(
     return written
 
 
+def write_suite_junit(
+    cases: list[ReportCase],
+    path: Path,
+    *,
+    suite_name: str = "MobiFlow",
+    started_at: str = "",
+    duration_s: float = 0.0,
+) -> Path:
+    """Write a multi-testcase JUnit XML suite report."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    failures = sum(1 for c in cases if not c.success)
+    skipped = sum(1 for c in cases if c.synthesis_only and c.success)
+    total_time = duration_s if duration_s > 0 else sum(max(0.0, c.duration_s) for c in cases)
+    suite = ET.Element(
+        "testsuite",
+        {
+            "name": suite_name,
+            "tests": str(len(cases)),
+            "failures": str(failures),
+            "errors": "0",
+            "skipped": str(skipped),
+            "time": f"{max(0.0, total_time):.3f}",
+            "timestamp": started_at
+            or datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        },
+    )
+    for case in cases:
+        classname = f"{case.provider}.{case.platform or 'mobile'}".strip(".")
+        testcase = ET.SubElement(
+            suite,
+            "testcase",
+            {
+                "name": case.name,
+                "classname": classname or "mobiflow",
+                "time": f"{max(0.0, case.duration_s):.3f}",
+            },
+        )
+        props = ET.SubElement(testcase, "properties")
+        for key, val in (
+            ("platform", case.platform),
+            ("provider", case.provider),
+            ("device_id", case.device_id),
+            ("dashboard_url", case.dashboard_url),
+            ("build_id", case.build_id),
+            ("flow_path", case.flow_path),
+            ("artifact_dir", case.artifact_dir),
+        ):
+            if val:
+                ET.SubElement(props, "property", {"name": key, "value": str(val)})
+        system_out = "\n".join(case.logs)
+        if case.stdout:
+            system_out = (system_out + "\n" + case.stdout).strip()
+        if system_out:
+            ET.SubElement(testcase, "system-out").text = system_out[-20000:]
+        if case.stderr:
+            ET.SubElement(testcase, "system-err").text = case.stderr[-20000:]
+        if case.synthesis_only and case.success:
+            ET.SubElement(
+                testcase, "skipped", {"message": case.summary or "synthesis only"}
+            )
+        elif not case.success:
+            msg = case.summary or case.error or "flow failed"
+            fail = ET.SubElement(testcase, "failure", {"message": msg[:500]})
+            fail.text = (case.stderr or case.stdout or case.error or msg)[-20000:]
+
+    rough = ET.tostring(suite, encoding="utf-8")
+    pretty = minidom.parseString(rough).toprettyxml(indent="  ", encoding="utf-8")
+    path.write_bytes(pretty)
+    return path
+
+
+def write_suite_html(
+    cases: list[ReportCase],
+    path: Path,
+    *,
+    suite_name: str = "MobiFlow",
+    started_at: str = "",
+    duration_s: float = 0.0,
+) -> Path:
+    """Write an HTML index for a multi-case suite."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    passed = sum(1 for c in cases if c.success)
+    failed = len(cases) - passed
+    ok = failed == 0 and len(cases) > 0
+    status = "PASSED" if ok else ("EMPTY" if not cases else "FAILED")
+    color = "#0a7a32" if ok else ("#78716c" if not cases else "#b42318")
+    total_time = duration_s if duration_s > 0 else sum(c.duration_s for c in cases)
+
+    rows = []
+    for case in cases:
+        st = "PASS" if case.success else "FAIL"
+        if case.synthesis_only and case.success:
+            st = "GEN"
+        st_color = "#0a7a32" if case.success else "#b42318"
+        if case.synthesis_only and case.success:
+            st_color = "#175cd3"
+        art = html.escape(case.artifact_dir or "-")
+        dash = ""
+        if case.dashboard_url:
+            u = html.escape(case.dashboard_url)
+            dash = f'<a href="{u}">dashboard</a>'
+        rows.append(
+            "<tr>"
+            f"<td><strong>{html.escape(case.name)}</strong></td>"
+            f'<td><span style="color:{st_color};font-weight:650">{st}</span></td>'
+            f"<td>{html.escape(case.summary or case.error or '-')}</td>"
+            f"<td>{case.duration_s:.1f}s</td>"
+            f"<td>{html.escape(case.provider or '-')}</td>"
+            f"<td>{html.escape(case.platform or '-')}</td>"
+            f"<td class='muted'>{art}</td>"
+            f"<td>{dash}</td>"
+            "</tr>"
+        )
+    table_body = "\n".join(rows) or (
+        "<tr><td colspan='8' class='muted'>No cases in suite.</td></tr>"
+    )
+    safe_name = html.escape(suite_name)
+
+    doc = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <title>MobiFlow suite — {safe_name} — {status}</title>
+  <style>
+    :root {{
+      --bg: #f6f4ef; --ink: #1c1917; --card: #fffdf8;
+      --line: #e7e0d5; --muted: #78716c; --accent: {color};
+    }}
+    body {{
+      margin: 0; font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+      background:
+        radial-gradient(1200px 500px at 10% -10%, #e8f0e4 0%, transparent 55%),
+        radial-gradient(900px 400px at 100% 0%, #f0e6d8 0%, transparent 50%),
+        var(--bg);
+      color: var(--ink); line-height: 1.45;
+    }}
+    main {{ max-width: 1100px; margin: 2rem auto; padding: 0 1.25rem 3rem; }}
+    header {{
+      background: var(--card); border: 1px solid var(--line);
+      border-radius: 16px; padding: 1.25rem 1.5rem; margin-bottom: 1.25rem;
+    }}
+    h1 {{ margin: 0 0 .35rem; font-size: 1.6rem; letter-spacing: -0.02em; }}
+    .brand {{ font-size: .85rem; text-transform: uppercase; letter-spacing: .12em; color: var(--muted); }}
+    .badge {{
+      display: inline-block; margin-top: .5rem; padding: .25rem .7rem;
+      border-radius: 999px; background: var(--accent); color: white;
+      font-weight: 650; font-size: .85rem;
+    }}
+    .stats {{ margin-top: .75rem; color: var(--muted); font-size: .95rem; }}
+    section {{
+      background: var(--card); border: 1px solid var(--line);
+      border-radius: 16px; padding: 1.1rem 1.35rem; margin-bottom: 1rem;
+      overflow-x: auto;
+    }}
+    table {{ width: 100%; border-collapse: collapse; font-size: .9rem; }}
+    th, td {{ text-align: left; vertical-align: top; padding: .55rem .4rem; border-bottom: 1px solid var(--line); }}
+    th {{ color: var(--muted); font-weight: 600; }}
+    .muted {{ color: var(--muted); font-size: .78rem; word-break: break-all; }}
+    a {{ color: #0f4c81; }}
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div class="brand">MobiFlow suite report</div>
+      <h1>{safe_name}</h1>
+      <div class="badge">{status}</div>
+      <div class="stats">
+        {passed} passed · {failed} failed · {len(cases)} total ·
+        {total_time:.1f}s · started {html.escape(started_at or "-")}
+      </div>
+    </header>
+    <section>
+      <table>
+        <thead>
+          <tr>
+            <th>Case</th><th>Status</th><th>Summary</th><th>Time</th>
+            <th>Provider</th><th>Platform</th><th>Artifacts</th><th>Link</th>
+          </tr>
+        </thead>
+        <tbody>
+          {table_body}
+        </tbody>
+      </table>
+    </section>
+  </main>
+</body>
+</html>
+"""
+    path.write_text(doc, encoding="utf-8")
+    return path
+
+
+def write_suite_reports(
+    cases: list[ReportCase],
+    report_dir: Path,
+    *,
+    formats: list[str],
+    suite_name: str = "MobiFlow",
+    started_at: str = "",
+    duration_s: float = 0.0,
+) -> dict[str, str]:
+    """Write suite-level JUnit/HTML/index; return map format → path."""
+    formats = normalize_report_formats(formats)
+    report_dir.mkdir(parents=True, exist_ok=True)
+    written: dict[str, str] = {}
+    if "junit" in formats:
+        junit_path = report_dir / "junit.xml"
+        write_suite_junit(
+            cases,
+            junit_path,
+            suite_name=suite_name,
+            started_at=started_at,
+            duration_s=duration_s,
+        )
+        written["junit"] = str(junit_path)
+    if "html" in formats:
+        html_path = report_dir / "report.html"
+        write_suite_html(
+            cases,
+            html_path,
+            suite_name=suite_name,
+            started_at=started_at,
+            duration_s=duration_s,
+        )
+        written["html"] = str(html_path)
+    index = {
+        "suite": suite_name,
+        "success": bool(cases) and all(c.success for c in cases),
+        "total": len(cases),
+        "passed": sum(1 for c in cases if c.success),
+        "failed": sum(1 for c in cases if not c.success),
+        "duration_s": duration_s,
+        "started_at": started_at,
+        "cases": [
+            {
+                "name": c.name,
+                "success": c.success,
+                "summary": c.summary,
+                "duration_s": c.duration_s,
+                "artifact_dir": c.artifact_dir,
+            }
+            for c in cases
+        ],
+        "reports": written,
+        "generated_at": datetime.now(UTC).isoformat(),
+    }
+    index_path = report_dir / "index.json"
+    index_path.write_text(json.dumps(index, indent=2) + "\n", encoding="utf-8")
+    written["index"] = str(index_path)
+    return written
+
+
 _DURATION_RE = re.compile(r"(?i)(?:duration|elapsed)[^\d]*(\d+(?:\.\d+)?)\s*(s|ms)?")
 
 
