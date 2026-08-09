@@ -21,9 +21,10 @@ curl -Ls "https://get.maestro.mobile.dev" | bash
 ## Install (dev)
 
 ```bash
-cd /Users/oldguard/Documents/MobiFlow
+git clone https://github.com/javed0211/MobiFlow.git
+cd MobiFlow
 python3.12 -m venv .venv
-source .venv/bin/activate
+source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -e ".[dev]"
 ```
 
@@ -107,10 +108,31 @@ mobiflow config show
 
 ## Test case format (`.txt`)
 
+Cases are free-form text with optional run knobs and external data. Full reference:
+**[docs/CASES.md](docs/CASES.md)**.
+
 ```text
+@smoke
 appId: org.wikipedia
 platform: android
-task: Open Wikipedia, dismiss onboarding, confirm Search is visible
+codegen: true          # false → reuse flows/<case>.yaml
+retries: 0
+heal: 2
+data: data/example.json
+task: |
+  Open Wikipedia, dismiss onboarding, confirm Search is visible
+  1. Launch the app
+  2. Tap Search and type ${SEARCH_QUERY}
+  3. Confirm Search results are visible
+```
+
+**Precedence for run knobs:** CLI → case file → `mobiflow.config.yaml`.  
+**Data:** `data:` accepts a relative or absolute path to `.json` / `.yaml` / `.env`;
+values flatten into Maestro `--env` / `${KEY}`.
+
+```bash
+mobiflow run cases/example.txt
+mobiflow run cases/wikipedia_complex_search.txt   # iOS Wikipedia + data file
 ```
 
 ## Commands
@@ -124,6 +146,8 @@ task: Open Wikipedia, dismiss onboarding, confirm Search is visible
 | `mobiflow suite [cases/]` | Same as `run` on a directory (defaults to `cases/`) |
 | `mobiflow run <case.txt> --gen-only` | Author YAML only |
 | `mobiflow run … --reuse-flow` | Skip LLM; use frozen `flows/<case>.yaml` |
+| `mobiflow run … --incremental` | Gap-explore only newly appended numbered steps |
+| `mobiflow run … --extend-explore` | Full explore + extend codegen from prior YAML |
 | `mobiflow gen "Open Settings…"` | One-shot NL → YAML |
 | `mobiflow explore "…" [--interactive]` | Discovery session (confirm each action with `--interactive`) |
 | `mobiflow import-flow flow.yaml` | Studio/YAML → MobiFlow case (+ copy into `flows/`) |
@@ -171,14 +195,22 @@ export BROWSERSTACK_USERNAME=... BROWSERSTACK_ACCESS_KEY=...
 ## Pipeline
 
 ```
-1. Load case + config (llm.json profiles)
-2. Explore app with discovery LLM (hierarchy → navigate → plan)
-3. Author Maestro YAML from exploration (+ JS when enabled)
-4. Local: maestro test --device <id>
+1. Load case + config + optional data: file → Maestro env
+2. Resolve run mode (codegen / reuse / incremental / extend) — CLI > case > config
+3. Explore app with discovery LLM (or replay prefix + gap for --incremental)
+4. Author / extend Maestro YAML (+ JS when enabled)
+5. Local: maestro test --device <id>
    Cloud: upload app + suite → BrowserStack / TestMu HyperExecute
-5. On fail → repair with failure log (≤ run.heal) → re-run
-6. Write flows/<case>.yaml (+ scripts) + reports under .mobiflow/
+6. On fail → repair with failure log (≤ heal) → re-run
+7. Write flows/<case>.yaml (+ scripts), guidance stamp, reports under .mobiflow/
 ```
+
+## Docs
+
+| Doc | Contents |
+|-----|----------|
+| [docs/CASES.md](docs/CASES.md) | Case template, run knobs, `data:`, incremental |
+| [docs/FEATURES.md](docs/FEATURES.md) | Devices, cloud, suite, JS, reporting, CI |
 
 ## Relation to test-agent-nexus Mobile Agent
 

@@ -1,0 +1,8 @@
+appId: com.apple.Preferences
+name: iOS Settings smoke with JS
+---
+- runScript: scripts/helpers.js
+- evalScript: ${output.platformTag = 'ios'}
+- launchApp
+- assertVisible: ".*Settings.*|General|Wi-Fi|Bluetooth|Display"
+- stopApp

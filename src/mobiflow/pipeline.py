@@ -11,8 +11,14 @@ from typing import Any
 
 from rich.console import Console
 
-from mobiflow.cases import load_case
+from mobiflow.cases import load_case, resolve_run_options
 from mobiflow.config import MobiflowConfig
+from mobiflow.incremental import (
+    classify_guidance,
+    format_gap_task,
+    load_guidance,
+    save_guidance,
+)
 from mobiflow.maestro import run_mobile_task
 from mobiflow.reporting import (
     ReportCase,
@@ -36,6 +42,17 @@ def _write_scripts(flow_dir: Path, scripts: dict[str, str]) -> list[Path]:
     return written
 
 
+def resolve_flow_path(case: Any, cfg: MobiflowConfig) -> Path | None:
+    """Return existing frozen YAML from case.flow or flows/<case>.yaml."""
+    if case.flow:
+        p = Path(case.flow).expanduser()
+        if not p.is_absolute():
+            p = cfg.repo_path() / p
+        return p.resolve() if p.is_file() else None
+    candidate = cfg.flow_dir_path() / f"{case.name}.yaml"
+    return candidate if candidate.is_file() else None
+
+
 def resolve_reuse_flow_path(
     case: Any,
     cfg: MobiflowConfig,
@@ -44,15 +61,11 @@ def resolve_reuse_flow_path(
 ) -> Path | None:
     """Return a frozen YAML path from case.flow or flows/<case>.yaml when enabled."""
     if case.flow:
-        p = Path(case.flow).expanduser()
-        if not p.is_absolute():
-            p = cfg.repo_path() / p
-        return p.resolve() if p.is_file() else None
+        return resolve_flow_path(case, cfg)
     want = cfg.run.reuse_flow if reuse_flow is None else reuse_flow
     if not want:
         return None
-    candidate = cfg.flow_dir_path() / f"{case.name}.yaml"
-    return candidate if candidate.is_file() else None
+    return resolve_flow_path(case, cfg)
 
 
 def _load_companion_scripts(flow_path: Path, cfg: MobiflowConfig) -> dict[str, str]:
@@ -73,6 +86,116 @@ def _load_companion_scripts(flow_path: Path, cfg: MobiflowConfig) -> dict[str, s
     return scripts
 
 
+def _resolve_incremental_plan(
+    case: Any,
+    cfg: MobiflowConfig,
+    *,
+    incremental: bool,
+    extend_explore: bool,
+) -> dict[str, Any]:
+    """Classify case growth and decide reuse / gap-explore / seeded extend."""
+    plan: dict[str, Any] = {
+        "mode": "full",
+        "reuse_yaml": None,
+        "reuse_scripts": {},
+        "prior_yaml": None,
+        "prior_scripts": {},
+        "extend": False,
+        "replay_prefix": False,
+        "explore_goal": None,
+        "codegen_goal": None,
+    }
+    if not incremental and not extend_explore:
+        return plan
+
+    prior_path = resolve_flow_path(case, cfg)
+    if prior_path is None:
+        console.print(
+            "  [yellow]incremental/extend: no prior flows/<case>.yaml — full run[/yellow]"
+        )
+        return plan
+
+    prior_yaml = prior_path.read_text(encoding="utf-8")
+    prior_scripts = _load_companion_scripts(prior_path, cfg)
+    current = case.guidance_steps()
+    prior_g = load_guidance(cfg.repo_path(), case.name)
+
+    if extend_explore and not incremental:
+        console.print(
+            f"  [cyan]extend-explore[/cyan] seeding codegen from {prior_path.name}"
+        )
+        plan.update(
+            {
+                "mode": "extend",
+                "prior_yaml": prior_yaml,
+                "prior_scripts": prior_scripts,
+                "extend": True,
+            }
+        )
+        return plan
+
+    # --incremental
+    if not prior_g:
+        # Flow exists but no stamped guidance — treat as dirty (seeded full)
+        diff_mode = "dirty"
+        common = 0
+        console.print(
+            "  [cyan]incremental[/cyan] no saved guidance stamp — "
+            "seeded full explore (dirty)"
+        )
+    else:
+        diff = classify_guidance(prior_g, current)
+        diff_mode = diff.mode
+        common = diff.common_prefix
+        console.print(
+            f"  [cyan]incremental[/cyan] guidance {diff_mode} "
+            f"(common prefix {common}/{len(current) or len(prior_g)})"
+        )
+
+    if diff_mode == "unchanged":
+        plan.update(
+            {
+                "mode": "unchanged",
+                "reuse_yaml": prior_yaml,
+                "reuse_scripts": prior_scripts,
+            }
+        )
+        return plan
+
+    if diff_mode == "append" and current:
+        new_steps = current[common:]
+        gap = format_gap_task(
+            title=case.task.split("\n", 1)[0][:120],
+            new_steps=new_steps,
+            start_index=common + 1,
+            app_id=case.app_id or cfg.device.app_id or "",
+        )
+        console.print(f"  → gap explore for {len(new_steps)} new step(s)")
+        plan.update(
+            {
+                "mode": "append",
+                "prior_yaml": prior_yaml,
+                "prior_scripts": prior_scripts,
+                "extend": True,
+                "replay_prefix": True,
+                "explore_goal": gap,
+                "codegen_goal": gap,
+            }
+        )
+        return plan
+
+    # dirty | fresh-with-prior
+    plan.update(
+        {
+            "mode": "dirty",
+            "prior_yaml": prior_yaml,
+            "prior_scripts": prior_scripts,
+            "extend": True,
+        }
+    )
+    return plan
+
+
 def run_pipeline(
     case_file: Path | str,
     cfg: MobiflowConfig,
@@ -81,6 +204,8 @@ def run_pipeline(
     device_id: str | None = None,
     no_heal: bool = False,
     reuse_flow: bool | None = None,
+    incremental: bool | None = None,
+    extend_explore: bool | None = None,
 ) -> dict[str, Any]:
     case = load_case(case_file)
     flow_dir = cfg.flow_dir_path()
@@ -94,11 +219,49 @@ def run_pipeline(
     codegen = cfg.codegen_profile()
     discovery = cfg.discovery_profile()
 
+    opts = resolve_run_options(
+        case,
+        cfg,
+        gen_only=gen_only,
+        no_heal=no_heal,
+        reuse_flow=reuse_flow,
+        incremental=incremental,
+        extend_explore=extend_explore,
+    )
+    gen_only = opts.gen_only
+    want_reuse = opts.reuse_flow
+    want_incr = opts.incremental
+    want_extend = opts.extend_explore
+
+    from mobiflow.casedata import format_data_prompt_block
+    from mobiflow.secrets import merge_flow_env, redact_text
+
+    data_path_resolved = None
+    data_flat: dict[str, str] = {}
+    data_block = ""
+    if case.data_path:
+        try:
+            data_path_resolved, _raw, data_flat = case.load_data(repo=cfg.repo_path())
+            data_block = format_data_prompt_block(
+                data_flat,
+                path=str(data_path_resolved) if data_path_resolved else case.data_path,
+            )
+        except (OSError, ValueError, FileNotFoundError) as exc:
+            raise ValueError(f"Case data: {exc}") from exc
+
+    task_text = case.explore_task(data_block=data_block)
+
     def progress(msg: str) -> None:
         console.print(f"  [dim]→[/dim] {msg}")
 
     console.print(f"[bold]Case[/bold] {case.name}")
-    console.print(f"  task: {case.explore_task()[:200]}")
+    console.print(f"  task: {task_text[:200]}")
+    for w in case.parse_warnings:
+        console.print(f"  [yellow]case warning:[/yellow] {w}")
+    if data_path_resolved is not None:
+        console.print(
+            f"  [cyan]data[/cyan] {data_path_resolved}  ({len(data_flat)} key(s))"
+        )
     provider = cfg.device.provider or "local"
     console.print(
         f"  provider={provider}  platform={platform}  appId={app_id or '(infer)'}  "
@@ -113,31 +276,73 @@ def run_pipeline(
         f"  LLM codegen={cfg.llm.codegen}  discovery={cfg.llm.discovery}  "
         f"lang={cfg.stack.language}"
     )
-
-    reuse_path = None if gen_only else resolve_reuse_flow_path(
-        case, cfg, reuse_flow=reuse_flow
+    mode_bits = []
+    if want_reuse:
+        mode_bits.append("reuseFlow")
+    if want_incr:
+        mode_bits.append("incremental")
+    if want_extend:
+        mode_bits.append("extendExplore")
+    if opts.gen_only:
+        mode_bits.append("genOnly")
+    console.print(
+        f"  run: heal={opts.heal} retries={opts.retries} "
+        f"explore={str(opts.explore).lower()} "
+        f"modes={','.join(mode_bits) or 'full'} "
+        f"[dim]({', '.join(f'{k}={v}' for k, v in sorted(opts.sources.items()))})[/dim]"
     )
+
     reuse_yaml = None
     reuse_scripts: dict[str, str] = {}
-    if reuse_path is not None:
-        reuse_yaml = reuse_path.read_text(encoding="utf-8")
-        reuse_scripts = _load_companion_scripts(reuse_path, cfg)
-        console.print(f"  [cyan]reuse-flow[/cyan] {reuse_path}")
-    elif (reuse_flow or cfg.run.reuse_flow) and not case.flow and not gen_only:
-        console.print(
-            f"  [yellow]reuse-flow requested but no YAML at "
-            f"{cfg.flow_dir_path() / (case.name + '.yaml')} — generating[/yellow]"
+    prior_yaml = None
+    prior_scripts: dict[str, str] = {}
+    extend = False
+    replay_prefix = False
+    explore_goal = None
+    codegen_goal = None
+    incr_mode = "full"
+
+    if want_reuse and not gen_only:
+        reuse_path = resolve_reuse_flow_path(case, cfg, reuse_flow=True)
+        if reuse_path is not None:
+            reuse_yaml = reuse_path.read_text(encoding="utf-8")
+            reuse_scripts = _load_companion_scripts(reuse_path, cfg)
+            console.print(f"  [cyan]reuse-flow[/cyan] {reuse_path}")
+        else:
+            console.print(
+                f"  [yellow]reuse-flow requested but no YAML at "
+                f"{cfg.flow_dir_path() / (case.name + '.yaml')} — generating[/yellow]"
+            )
+    elif want_incr or want_extend:
+        plan = _resolve_incremental_plan(
+            case,
+            cfg,
+            incremental=bool(want_incr),
+            extend_explore=bool(want_extend),
         )
+        incr_mode = str(plan["mode"])
+        reuse_yaml = plan.get("reuse_yaml")
+        reuse_scripts = dict(plan.get("reuse_scripts") or {})
+        prior_yaml = plan.get("prior_yaml")
+        prior_scripts = dict(plan.get("prior_scripts") or {})
+        extend = bool(plan.get("extend"))
+        # gen-only: skip device prefix replay
+        replay_prefix = bool(plan.get("replay_prefix")) and not gen_only
+        explore_goal = plan.get("explore_goal")
+        codegen_goal = plan.get("codegen_goal")
 
-    from mobiflow.secrets import merge_flow_env, redact_text
-
-    flow_env = merge_flow_env(cfg.run.env, case.env)
+    # Merge order: config env < data file < case env (case wins)
+    flow_env = merge_flow_env(cfg.run.env, data_flat, case.env)
     if flow_env:
         console.print(f"  env keys: {', '.join(sorted(flow_env))}")
 
     import asyncio
 
-    run_timeout = max(cfg.run.timeout_s, cfg.device.boot_timeout_s)
+    run_timeout = (
+        opts.timeout_s
+        if opts.timeout_s is not None
+        else max(cfg.run.timeout_s, cfg.device.boot_timeout_s)
+    )
     if cfg.device.is_cloud():
         run_timeout = max(run_timeout, int(cfg.device.cloud_timeout_s or 1800))
 
@@ -151,16 +356,16 @@ def run_pipeline(
     t0 = time.monotonic()
     result = asyncio.run(
         run_mobile_task(
-            case.explore_task(),
+            task_text,
             codegen_profile=codegen,
             discovery_profile=discovery,
             app_id=app_id,
             platform=platform,
             device_id=selected_device,
-            heal=0 if (no_heal or gen_only) else cfg.run.heal,
-            adaptive=cfg.run.adaptive and not gen_only,
-            explore=cfg.run.explore and not gen_only and reuse_yaml is None,
-            explore_steps=cfg.run.explore_steps,
+            heal=opts.heal,
+            adaptive=opts.adaptive and not gen_only,
+            explore=opts.explore and not gen_only and reuse_yaml is None,
+            explore_steps=opts.explore_steps,
             timeout_s=run_timeout,
             live=not gen_only,
             allow_js=allow_js,
@@ -171,11 +376,17 @@ def run_pipeline(
             clear_state=bool(case.clear_state),
             preflight=list(cfg.run.preflight or []),
             app_path=cfg.device.app_path or "",
-            retries=0 if gen_only else cfg.run.retries,
+            retries=0 if gen_only else opts.retries,
             reuse_flow_yaml=reuse_yaml,
             reuse_scripts=reuse_scripts or None,
             flow_env=flow_env or None,
             expect=list(case.expect or []),
+            prior_flow_yaml=prior_yaml,
+            prior_scripts=prior_scripts or None,
+            extend=extend,
+            replay_prefix=replay_prefix,
+            explore_goal=explore_goal,
+            codegen_goal=codegen_goal,
         )
     )
     duration_s = time.monotonic() - t0
@@ -188,6 +399,21 @@ def run_pipeline(
         console.print(f"[green]Wrote flow[/green] → {out_flow}")
     for sp in _write_scripts(flow_dir, scripts):
         console.print(f"[green]Wrote script[/green] → {sp}")
+
+    # Stamp guidance after a successful generation / reuse so tomorrow's
+    # --incremental can classify append vs dirty.
+    if result.get("success") and case.guidance_steps():
+        try:
+            gpath = save_guidance(
+                cfg.repo_path(),
+                case.name,
+                case.guidance_steps(),
+                flow_path=str(out_flow) if flow_yaml else "",
+                mode=incr_mode,
+            )
+            console.print(f"[dim]Guidance stamp → {gpath}[/dim]")
+        except OSError as exc:
+            logger.warning("Could not save guidance stamp: %s", exc)
 
     run_meta = result.get("run") or {}
     reports_written: dict[str, str] = {}
@@ -242,7 +468,7 @@ def run_pipeline(
             success=bool(result.get("success")),
             summary=str(result.get("summary") or ""),
             error=str(result.get("error") or ""),
-            task=case.explore_task(),
+            task=task_text,
             platform=str(result.get("platform") or platform or ""),
             provider=str(result.get("provider") or provider),
             device_id=str(result.get("device_id") or selected_device or ""),
@@ -306,7 +532,9 @@ def run_pipeline(
         inventory = index_artifacts(run_artifact_dir)
         payload = {
             "case": case.name,
-            "task": case.explore_task(),
+            "task": task_text,
+            "data_path": str(data_path_resolved) if data_path_resolved else "",
+            "data_keys": sorted(data_flat.keys()),
             "success": result.get("success"),
             "summary": result.get("summary"),
             "flow_path": str(out_flow),
@@ -321,6 +549,7 @@ def run_pipeline(
             "run": result.get("run"),
             "attempts": result.get("attempts"),
             "exploration": result.get("exploration"),
+            "incremental_mode": incr_mode,
             "duration_s": duration_s,
             "started_at": started_at,
             "artifact_dir": str(run_artifact_dir),
@@ -351,6 +580,7 @@ def run_pipeline(
     result["started_at"] = started_at
     result["flow_path"] = str(out_flow) if flow_yaml else str(result.get("flow_path") or "")
     result["case"] = case.name
+    result["incremental_mode"] = incr_mode
 
     ok = bool(result.get("success"))
     if ok:

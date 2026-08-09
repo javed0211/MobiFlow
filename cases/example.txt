@@ -1,8 +1,35 @@
-# Intent-style mobile case — copy to make new ones
+# MobiFlow case template — copy to cases/<name>.txt and edit.
+# Precedence for run knobs: CLI flags > this file > mobiflow.config.yaml
+#
+# Required: task (or numbered steps). Recommended: appId, platform.
+# Numbered steps enable incremental: true gap-explore.
+
 @smoke
 appId: org.wikipedia
 platform: android
-task: Open the Wikipedia app, dismiss any onboarding, and confirm Search is visible
 # device: emulator-5554
 # flow: flows/example.yaml
 # clearState: false
+
+# --- Run options (all optional) ---
+codegen: true            # false → reuse frozen flows/<case>.yaml (no LLM)
+retries: 0
+heal: 2
+explore: true
+
+data: data/example.json
+
+# env:                     # optional overrides on top of data file
+#   SEARCH_QUERY = Marie Curie
+expect:
+  - Search
+
+task: |
+  Open the Wikipedia app, dismiss any onboarding, and confirm Search is visible.
+  Use the test data values (Maestro ${SEARCH_QUERY}, ${ARTICLE_HINT}, ${USER_NAME}).
+
+  1. Launch the app
+  2. Dismiss onboarding if shown
+  3. Confirm Search is visible
+  4. Tap Search and type ${SEARCH_QUERY}
+  5. Confirm results related to ${SEARCH_QUERY} appear

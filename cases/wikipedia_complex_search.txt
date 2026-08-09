@@ -1,0 +1,35 @@
+@smoke @wikipedia @complex
+appId: org.wikimedia.wikipedia
+platform: ios
+device: 8B9754B2-AD59-476F-924E-E243FAA609EB
+# After first green run, flip codegen to false (or set reuseFlow: true)
+codegen: true
+retries: 0
+heal: 2
+explore: true
+
+data: data/wikipedia_complex_search.json
+
+task: |
+  Open the Wikipedia iOS app and complete this multi-step journey.
+  Use test data via Maestro ${SEARCH_QUERY}, ${ARTICLE_HINT}, ${ASSERT_TITLE}
+  (loaded from data/wikipedia_complex_search.json — do not hardcode those strings).
+
+  1. Dismiss any first-launch onboarding, guided tour, Year in Review, login prompts,
+     notification permission sheets, or "Continue without logging in" modals
+     (Skip / Next / Continue / Get started / Allow / Not now / Done — all optional).
+  2. Confirm the main Explore or Search experience is visible.
+  3. Tap the Search field (Search Wikipedia / Search).
+  4. Type the query: ${SEARCH_QUERY}
+  5. Submit the search (press Enter / Return / Search key) and wait for results.
+  6. Open the first search result article (not the search field itself — use a
+     result row / index carefully if needed).
+  7. On the article page, wait for content to load, then scroll until a section
+     related to ${ARTICLE_HINT}, Early life, Scientific, or Awards is visible
+     (use scrollUntilVisible when appropriate).
+  8. Assert that the article title or ${ASSERT_TITLE}-related heading is visible.
+  9. Navigate back to search or Explore if a back control is available (optional).
+  10. End by closing the app (stopApp).
+
+  Prefer stable visible text selectors. Cover every numbered step in the Maestro YAML.
+  Do not emit Playwright or Appium.

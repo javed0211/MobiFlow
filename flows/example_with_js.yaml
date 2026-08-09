@@ -2,7 +2,7 @@ appId: com.android.settings
 name: Settings smoke with JS helper
 ---
 - runScript: scripts/helpers.js
-- evalScript: ${setOutput('runId', 'demo-' + Date.now())}
+- evalScript: ${output.platformTag = 'android'}
 - launchApp
 - assertVisible: "Settings|Network|Apps|Wi-Fi"
 - stopApp

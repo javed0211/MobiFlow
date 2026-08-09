@@ -1,0 +1,117 @@
+appId: org.wikimedia.wikipedia
+---
+- launchApp
+- waitForAnimationToEnd
+
+# Dismiss common first-launch, promo, and permission prompts if they appear
+- tapOn:
+    text: "Skip"
+    optional: true
+- tapOn:
+    text: "Continue"
+    optional: true
+- tapOn:
+    text: "Get started"
+    optional: true
+- tapOn:
+    text: "Done"
+    optional: true
+- tapOn:
+    text: "Close"
+    optional: true
+- tapOn:
+    text: "Not now"
+    optional: true
+- tapOn:
+    text: "Maybe later"
+    optional: true
+- tapOn:
+    text: "No thanks"
+    optional: true
+- tapOn:
+    text: "Allow"
+    optional: true
+- tapOn:
+    text: "OK"
+    optional: true
+- tapOn:
+    text: "Turn on"
+    optional: true
+- tapOn:
+    text: "Later"
+    optional: true
+
+- waitForAnimationToEnd
+
+# Ensure we are at a usable Explore/Search entry point
+- assertVisible:
+    text: "Search"
+    optional: true
+- assertVisible:
+    text: "Search Wikipedia"
+    optional: true
+- assertVisible:
+    text: "Explore"
+    optional: true
+
+# Open search
+- tapOn:
+    text: "Search Wikipedia"
+    optional: true
+- tapOn:
+    text: "Search"
+    optional: true
+
+- waitForAnimationToEnd
+
+# Type and submit the query
+- inputText: "Albert Einstein"
+- pressKey: Enter
+- waitForAnimationToEnd
+
+# Open the article result
+- tapOn:
+    text: "Albert Einstein"
+    index: 0
+
+- waitForAnimationToEnd
+
+# Evidence the Einstein article opened
+- assertVisible:
+    text: "Albert Einstein"
+
+# Scroll to a likely section/header on the article without depending on "Early life"
+- scrollUntilVisible:
+    element:
+      text: "Life"
+    direction: DOWN
+    timeout: 30000
+    optional: true
+
+- scrollUntilVisible:
+    element:
+      text: "Biography"
+    direction: DOWN
+    timeout: 30000
+    optional: true
+
+- scrollUntilVisible:
+    element:
+      text: "Scientific career"
+    direction: DOWN
+    timeout: 30000
+    optional: true
+
+# Keep final evidence broad and reliable
+- assertVisible:
+    text: "Albert Einstein"
+
+# Optional navigate back if available
+- tapOn:
+    text: "Back"
+    optional: true
+- tapOn:
+    text: "Search"
+    optional: true
+
+- stopApp

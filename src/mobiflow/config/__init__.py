@@ -177,6 +177,8 @@ class RunConfig(BaseModel):
     # Completeness foundations (suite / flake / reuse / secrets — wired in later phases)
     retries: int = 0  # re-run same YAML on failure before heal
     reuse_flow: bool = False  # prefer flows/<case>.yaml over LLM codegen
+    incremental: bool = False  # classify guidance; gap-explore appended steps
+    extend_explore: bool = False  # full explore + extend codegen from prior YAML
     fail_fast: bool = False  # suite: stop after first failing case
     jobs: int = 1  # suite parallelism (1 = sequential)
     env: dict[str, str] = Field(default_factory=dict)  # Maestro --env KEY=VALUE
@@ -405,6 +407,8 @@ def render_simple_config(config: MobiflowConfig) -> str:
         f"  report_dir: {run.report_dir}",
         f"  retries: {run.retries}       # re-run same YAML before heal (flake control)",
         f"  reuse_flow: {str(run.reuse_flow).lower()}  # use flows/<case>.yaml instead of LLM",
+        f"  incremental: {str(run.incremental).lower()}  # gap-explore appended numbered steps",
+        f"  extend_explore: {str(run.extend_explore).lower()}  # seed codegen from prior YAML",
         f"  fail_fast: {str(run.fail_fast).lower()}   # suite: stop on first failure",
         f"  jobs: {run.jobs}           # suite parallelism (1 = sequential)",
         f"  preflight: [{', '.join(run.preflight) if run.preflight else ''}]   # install, clear",

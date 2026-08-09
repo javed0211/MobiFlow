@@ -54,6 +54,8 @@ run:
   report_dir: .mobiflow/reports
   retries: 0                   # re-run same YAML before heal (flake control)
   reuse_flow: false            # use flows/<case>.yaml instead of LLM
+  incremental: false           # gap-explore only newly appended numbered steps
+  extend_explore: false        # full explore + extend codegen from prior YAML
   fail_fast: false             # suite: stop on first failure
   jobs: 1                      # suite parallelism (1 = sequential)
   preflight: []                # install, clear — local lifecycle before explore/run

@@ -1,5 +1,8 @@
 # MobiFlow features
 
+Feature deep-dives. For **writing cases** (template, run knobs, `data:`, incremental),
+see **[CASES.md](CASES.md)**.
+
 ## Maestro languages: YAML + JavaScript
 
 Maestro’s primary language is **YAML**. MobiFlow also supports Maestro’s built-in **JavaScript** (GraalJS):
@@ -205,9 +208,76 @@ mobiflow suite cases/ --fail-fast
 | `run.jobs` | Reserved for parallel suites (currently sequential) |
 | `run.retries` | Re-run same YAML before each heal (flake control) |
 | `run.reuse_flow` / `--reuse-flow` | Skip LLM; use `flows/<case>.yaml` or case `flow:` |
+| `run.incremental` / `--incremental` | Classify numbered steps; gap-explore only appended ones |
+| `run.extend_explore` / `--extend-explore` | Full explore + extend codegen from prior YAML |
 | `run.env` / case `env:` | Maestro `--env KEY=VALUE` (values can be env var names) |
 | `run.jobs` / `--jobs N` | Parallel suite workers |
 | case `expect:` | Force `assertVisible` lines into generated/reused YAML |
+| case `data:` | Path to JSON / YAML / `.env` (relative or absolute) → Maestro `--env` |
+
+### Case data files
+
+```text
+data: data/login.json          # relative to case dir, then repo root
+# data: /abs/path/users.yaml
+# data: ../fixtures/creds.env
+```
+
+Supported: `.json`, `.yaml` / `.yml`, `.env`. Nested keys flatten to Maestro env
+names (`user.email` → `USER_EMAIL`). Merge order: **config `run.env` < data file <
+case `env:`**. Values are available as `${KEY}` in generated YAML and as a prompt
+block for explore/codegen. `DATA_PATH` is always set to the resolved absolute path.
+
+```json
+{ "search_query": "Albert Einstein", "user": { "name": "demo" } }
+```
+→ `--env SEARCH_QUERY=… --env USER_NAME=demo --env DATA_PATH=…`
+
+### Case template & per-case run options
+
+Copy `cases/example.txt` (or the template from `mobiflow init`). Precedence for run
+knobs is **CLI → case file → `mobiflow.config.yaml`**.
+
+| Case key | Meaning |
+|----------|---------|
+| `codegen: false` | Reuse frozen YAML (same as `reuseFlow: true`) |
+| `reuseFlow` / `incremental` / `extendExplore` | Exclusive modes (same as CLI) |
+| `retries` / `heal` / `explore` / `exploreSteps` | Flake + explore controls |
+| `genOnly` / `adaptive` / `timeout` | Author-only / heal / per-case timeout |
+| `strict: true` | Unknown keys are errors (default: warn) |
+
+```text
+@smoke
+appId: org.wikipedia
+platform: android
+codegen: false
+retries: 1
+heal: 2
+task: |
+  1. Launch the app
+  2. Confirm Search is visible
+```
+
+Then `mobiflow run cases/my-flow.txt` needs no flags for that behavior.
+
+### Incremental case growth
+
+When a case uses **numbered steps** (`1. …`, `2. …`), a successful run stamps them under
+`.mobiflow/guidance/<case>.json`. Later:
+
+```bash
+# Appended steps only — replay prior YAML (no stopApp), explore the gap, extend YAML
+mobiflow run cases/wikipedia_complex_search.txt --incremental
+
+# Messy mid-flow edits — full explore, but seed codegen from prior YAML
+mobiflow run cases/wikipedia_complex_search.txt --extend-explore
+
+# Unchanged guidance under --incremental → same as --reuse-flow
+```
+
+**Mutually exclusive** with each other and `--reuse-flow`. Without a guidance stamp, the
+first `--incremental` run treats an existing flow as **dirty** (seeded full explore); after
+a successful pass the stamp is written for true append detection.
 
 Cloud runs download screenshots/video/logs into `.mobiflow/runs/.../cloud/` when
 APIs expose them (BrowserStack sessions; TestMu best-effort from CLI URLs).

@@ -398,6 +398,16 @@ def devices_cmd(
     help="Use flows/<case>.yaml (or case flow:) instead of LLM codegen",
 )
 @click.option(
+    "--incremental/--no-incremental",
+    default=None,
+    help="Classify numbered steps; gap-explore only newly appended ones",
+)
+@click.option(
+    "--extend-explore/--no-extend-explore",
+    default=None,
+    help="Full explore + extend codegen seeded from prior flows/<case>.yaml",
+)
+@click.option(
     "--tag",
     "tags",
     multiple=True,
@@ -421,6 +431,8 @@ def run_cmd(
     gen_only: bool,
     no_heal: bool,
     reuse_flow: bool | None,
+    incremental: bool | None,
+    extend_explore: bool | None,
     tags: tuple[str, ...],
     fail_fast: bool | None,
     jobs: int | None,
@@ -431,6 +443,7 @@ def run_cmd(
 
         mobiflow run cases/example.txt
         mobiflow run cases/ --tag smoke
+        mobiflow run cases/wiki.txt --incremental
     """
     from mobiflow.pipeline import run_pipeline
     from mobiflow.suite import run_suite
@@ -441,16 +454,22 @@ def run_cmd(
     if path.is_dir():
         if jobs is not None:
             cfg.run.jobs = max(1, min(int(jobs), 32))
-        suite = run_suite(
-            path,
-            cfg,
-            tags=list(tags) or None,
-            gen_only=gen_only,
-            device_id=device_id,
-            no_heal=no_heal,
-            fail_fast=fail_fast,
-            reuse_flow=reuse_flow,
-        )
+        try:
+            suite = run_suite(
+                path,
+                cfg,
+                tags=list(tags) or None,
+                gen_only=gen_only,
+                device_id=device_id,
+                no_heal=no_heal,
+                fail_fast=fail_fast,
+                reuse_flow=reuse_flow,
+                incremental=incremental,
+                extend_explore=extend_explore,
+            )
+        except ValueError as exc:
+            console.print(f"[red]{exc}[/red]")
+            sys.exit(2)
         if not suite.success:
             sys.exit(1)
         return
@@ -460,14 +479,20 @@ def run_cmd(
             "[yellow]--tag is ignored for a single case file "
             "(use a cases/ directory).[/yellow]"
         )
-    result = run_pipeline(
-        path,
-        cfg,
-        gen_only=gen_only,
-        device_id=device_id,
-        no_heal=no_heal,
-        reuse_flow=reuse_flow,
-    )
+    try:
+        result = run_pipeline(
+            path,
+            cfg,
+            gen_only=gen_only,
+            device_id=device_id,
+            no_heal=no_heal,
+            reuse_flow=reuse_flow,
+            incremental=incremental,
+            extend_explore=extend_explore,
+        )
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/red]")
+        sys.exit(2)
     if not result.get("success"):
         sys.exit(1)
 
@@ -487,6 +512,16 @@ def run_cmd(
     "--reuse-flow/--no-reuse-flow",
     default=None,
     help="Use flows/<case>.yaml instead of LLM codegen",
+)
+@click.option(
+    "--incremental/--no-incremental",
+    default=None,
+    help="Classify numbered steps; gap-explore only newly appended ones",
+)
+@click.option(
+    "--extend-explore/--no-extend-explore",
+    default=None,
+    help="Full explore + extend codegen seeded from prior flows/<case>.yaml",
 )
 @click.option(
     "--tag",
@@ -512,6 +547,8 @@ def suite_cmd(
     gen_only: bool,
     no_heal: bool,
     reuse_flow: bool | None,
+    incremental: bool | None,
+    extend_explore: bool | None,
     tags: tuple[str, ...],
     fail_fast: bool | None,
     jobs: int | None,
@@ -531,16 +568,22 @@ def suite_cmd(
     if not target.exists():
         console.print(f"[red]Cases path not found:[/red] {target}")
         sys.exit(1)
-    suite = run_suite(
-        target,
-        cfg,
-        tags=list(tags) or None,
-        gen_only=gen_only,
-        device_id=device_id,
-        no_heal=no_heal,
-        fail_fast=fail_fast,
-        reuse_flow=reuse_flow,
-    )
+    try:
+        suite = run_suite(
+            target,
+            cfg,
+            tags=list(tags) or None,
+            gen_only=gen_only,
+            device_id=device_id,
+            no_heal=no_heal,
+            fail_fast=fail_fast,
+            reuse_flow=reuse_flow,
+            incremental=incremental,
+            extend_explore=extend_explore,
+        )
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/red]")
+        sys.exit(2)
     if not suite.cases:
         sys.exit(2)
     if not suite.success:
@@ -1011,13 +1054,27 @@ def test_flow_cmd(flow_file: str, device_id: str | None, repo: str | None) -> No
     except SystemExit:
         pass
 
-    yaml_text = Path(flow_file).read_text(encoding="utf-8")
-    case_name = Path(flow_file).stem
+    flow_path = Path(flow_file).expanduser().resolve()
+    yaml_text = flow_path.read_text(encoding="utf-8")
+    case_name = flow_path.stem
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     artifact_dir = None
     if cfg is not None and cfg.run.save_artifacts:
         artifact_dir = cfg.artifacts_dir() / "runs" / f"{case_name}-{stamp}"
         artifact_dir.mkdir(parents=True, exist_ok=True)
+
+    # Load companion JS referenced by runScript (same as pipeline reuse path)
+    scripts: dict[str, str] = {}
+    if cfg is not None:
+        from mobiflow.pipeline import _load_companion_scripts
+
+        scripts = _load_companion_scripts(flow_path, cfg)
+    else:
+        scripts_dir = flow_path.parent / "scripts"
+        if scripts_dir.is_dir():
+            for js in scripts_dir.rglob("*.js"):
+                rel = js.relative_to(flow_path.parent)
+                scripts[str(rel).replace("\\", "/")] = js.read_text(encoding="utf-8")
 
     def progress(msg: str) -> None:
         console.print(f"  [dim]→[/dim] {msg}")
@@ -1028,6 +1085,7 @@ def test_flow_cmd(flow_file: str, device_id: str | None, repo: str | None) -> No
             yaml_text,
             device_id=device_id,
             timeout_s=timeout,
+            scripts=scripts or None,
             progress=progress,
             device_config=device_config,
             platform=platform,

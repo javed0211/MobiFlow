@@ -388,18 +388,21 @@ def _normalize_run_script_paths(flow_yaml: str, scripts: dict[str, str]) -> str:
 DEFAULT_HELPERS_JS = """\
 // MobiFlow Maestro helpers (GraalJS sandbox — no Node.js APIs)
 // Use via: - runScript: scripts/helpers.js
-// Values set on `output` are available later as ${output.key}
+// Values on `output` are available later as ${output.key}
 
-function setOutput(key, value) {
-  output[key] = value;
-  return value;
-}
+output.runId = 'run-' + Date.now()
+output.ready = true
+"""
 
-function nowIso() {
-  return new Date().toISOString();
-}
 
-// Example: setOutput('runId', 'run-' + Date.now());
+_EXTEND_SYSTEM_SUFFIX = """
+INCREMENTAL EXTEND MODE:
+You are EXTENDING an existing Maestro flow. A previous flow YAML is provided.
+- Keep all prior working commands unless a repair is clearly required.
+- Add commands ONLY for the NEW gap steps (after the common prefix).
+- Return a COMPLETE flow YAML (appId + --- + full command list ending in stopApp).
+- Do not relaunch unnecessarily if launchApp is already present.
+- Prefer appending new steps before the final stopApp.
 """
 
 
@@ -415,6 +418,7 @@ async def generate_flow_bundle(
     failure_log: str = "",
     exploration: str = "",
     allow_js: bool = True,
+    extend: bool = False,
     progress: ProgressFn = None,
 ) -> FlowBundle:
     """NL (or pasted YAML) → Maestro FlowBundle (YAML + optional JS)."""
@@ -426,14 +430,16 @@ async def generate_flow_bundle(
     # Deterministic shortcuts (YAML-only — no JS needed) when no explore/repair context
     gl = goal.lower()
     if (
-        not exploration.strip()
+        not extend
+        and not exploration.strip()
         and not previous_yaml
         and "settings" in gl
         and ("open" in gl or "launch" in gl)
     ):
         return FlowBundle(flow_yaml=_settings_flow(platform))
     if (
-        not exploration.strip()
+        not extend
+        and not exploration.strip()
         and not previous_yaml
         and "wikipedia" in gl
         and ("open" in gl or "launch" in gl)
@@ -442,14 +448,17 @@ async def generate_flow_bundle(
         return FlowBundle(flow_yaml=_wikipedia_open_flow(platform, resolved))
 
     if progress:
+        mode = "extend" if extend else "author"
         progress(
-            "Authoring Maestro YAML"
+            f"{'Extending' if extend else 'Authoring'} Maestro YAML"
             + (" + JS" if allow_js else "")
             + (" from exploration" if exploration.strip() else "")
             + " with LLM…"
         )
 
     system = _MAESTRO_SYSTEM_JS if allow_js else _MAESTRO_SYSTEM_YAML
+    if extend and previous_yaml.strip():
+        system = system + "\n" + _EXTEND_SYSTEM_SUFFIX
     llm_config = profile_to_llm_config(profile)
     user_parts = [
         f"Platform: {platform or 'android'}",
@@ -460,8 +469,9 @@ async def generate_flow_bundle(
     if exploration.strip():
         user_parts.append(exploration.strip()[:12000])
     if previous_yaml.strip():
+        label = "Previous flow YAML to extend" if extend else "Previous flow YAML to repair"
         user_parts.append(
-            f"Previous flow YAML to repair:\n```yaml\n{previous_yaml.strip()}\n```"
+            f"{label}:\n```yaml\n{previous_yaml.strip()}\n```"
         )
     if previous_scripts:
         for name, body in previous_scripts.items():
@@ -474,7 +484,12 @@ async def generate_flow_bundle(
         user_parts.append(
             f"Current view hierarchy (truncated):\n{hierarchy.strip()[:8000]}"
         )
-    if allow_js:
+    if extend and previous_yaml.strip():
+        user_parts.append(
+            "Return a COMPLETE extended Maestro flow in ```yaml flow.yaml``` "
+            "(prior steps + new gap steps). End with stopApp."
+        )
+    elif allow_js:
         user_parts.append(
             "Return ```yaml flow.yaml``` and optional ```javascript scripts/<name>.js```. "
             "End YAML with stopApp."
@@ -494,6 +509,12 @@ async def generate_flow_bundle(
         log_prefix="MobiFlow",
     )
     bundle = parse_flow_bundle(text or "", app_id=resolved)
+    if extend and previous_yaml.strip():
+        from mobiflow.incremental import merge_flow_yaml
+
+        bundle.flow_yaml = merge_flow_yaml(
+            previous_yaml, bundle.flow_yaml, app_id=resolved
+        )
     if not allow_js:
         # Strip JS if project disabled it
         bundle.scripts = {}
@@ -812,12 +833,22 @@ async def run_mobile_task(
     reuse_scripts: dict[str, str] | None = None,
     flow_env: dict[str, str] | None = None,
     expect: list[str] | None = None,
+    prior_flow_yaml: str | None = None,
+    prior_scripts: dict[str, str] | None = None,
+    extend: bool = False,
+    replay_prefix: bool = False,
+    explore_goal: str | None = None,
+    codegen_goal: str | None = None,
 ) -> dict[str, Any]:
     """Full agent loop: preflight → explore → author YAML(+JS) → run → heal.
 
     ``retries`` re-runs the same YAML before each heal. ``reuse_flow_yaml``
     skips explore/codegen and executes the provided flow (optionally with heal).
     ``flow_env`` is passed to Maestro as ``--env KEY=VALUE``.
+
+    Incremental / extend modes (mutually exclusive with reuse at the pipeline layer):
+    - ``replay_prefix``: run prior YAML without ``stopApp``, then explore ``explore_goal``
+    - ``extend``: codegen extends ``prior_flow_yaml`` for new steps
     """
     from mobiflow.cloud.base import is_cloud_provider
     from mobiflow.devices import ensure_device
@@ -984,12 +1015,54 @@ async def run_mobile_task(
         scripts = bundle.scripts
         _p("Detected Maestro YAML — running as-is.")
     else:
+        from mobiflow.incremental import strip_trailing_stop_app
+
+        explore_text = (explore_goal or goal).strip() or goal
+        codegen_text = (codegen_goal or goal).strip() or goal
+        prior_yaml = (prior_flow_yaml or "").strip()
+        use_extend = bool(extend and prior_yaml)
+        seeded_scripts = dict(prior_scripts or {})
+
+        # Incremental append: replay known prefix so gap explore starts mid-flow
+        if (
+            replay_prefix
+            and prior_yaml
+            and live
+            and selected
+            and not cloud
+            and status.get("installed")
+        ):
+            prefix_yaml = strip_trailing_stop_app(prior_yaml)
+            _p("Replaying prior flow prefix (leaving app open for gap explore)…")
+            prefix_dir = None
+            if run_root is not None:
+                prefix_dir = run_root / "prefix-replay"
+                prefix_dir.mkdir(parents=True, exist_ok=True)
+            prefix_run = await run_flow_yaml(
+                prefix_yaml,
+                device_id=selected,
+                timeout_s=timeout_s,
+                scripts=seeded_scripts or None,
+                progress=_p,
+                device_config=device_config,
+                platform=platform,
+                artifact_dir=prefix_dir,
+                flow_env=flow_env,
+            )
+            if not prefix_run.get("ok"):
+                _p("Prefix replay failed — falling back to full explore + extend codegen.")
+                explore_text = goal
+                codegen_text = goal
+                use_extend = True
+            else:
+                _p("Prefix replay ok — exploring new steps only.")
+
         # --- Explore phase (discovery LLM) before codegen ---
         want_explore = bool(explore and discovery is not None)
         if want_explore and live and selected and not cloud and status.get("installed"):
             try:
                 exploration = await explore_app(
-                    goal,
+                    explore_text,
                     app_id=app_id,
                     platform=platform,
                     device_id=selected,
@@ -1001,7 +1074,7 @@ async def run_mobile_task(
             except Exception as e:  # noqa: BLE001
                 _p(f"Explore failed ({e}); falling back to hierarchy snapshot.")
                 exploration = ExplorationResult(
-                    goal=goal,
+                    goal=explore_text,
                     app_id=app_id,
                     platform=platform,
                     mode="skipped",
@@ -1011,7 +1084,7 @@ async def run_mobile_task(
             # Cloud / no device: plan-only exploration from the goal text
             try:
                 exploration = await plan_only_explore(
-                    goal=goal,
+                    goal=explore_text,
                     app_id=app_id,
                     platform=platform,
                     profile=discovery,
@@ -1051,17 +1124,23 @@ async def run_mobile_task(
             _p("Skipping local hierarchy (cloud provider) — heal uses failure logs only.")
 
         bundle = await generate_flow_bundle(
-            goal,
+            codegen_text,
             app_id=app_id,
             platform=platform,
             profile=codegen_profile,
             hierarchy=hierarchy,
+            previous_yaml=prior_yaml if (use_extend or prior_yaml) else "",
+            previous_scripts=seeded_scripts or None,
             exploration=exploration_prompt,
             allow_js=allow_js,
+            extend=use_extend,
             progress=_p,
         )
         flow = bundle.flow_yaml
-        scripts = bundle.scripts
+        scripts = dict(bundle.scripts)
+        # Keep prior companion scripts when extend did not re-emit them
+        for rel, body in seeded_scripts.items():
+            scripts.setdefault(rel, body)
 
     if expect:
         flow = ensure_expect_asserts(flow, list(expect))
