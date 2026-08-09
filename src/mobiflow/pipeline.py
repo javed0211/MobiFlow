@@ -387,6 +387,10 @@ def run_pipeline(
             replay_prefix=replay_prefix,
             explore_goal=explore_goal,
             codegen_goal=codegen_goal,
+            record_video=bool(cfg.run.video) and not cfg.device.is_cloud(),
+            include_tags=list(cfg.run.include_tags or []),
+            exclude_tags=list(cfg.run.exclude_tags or []),
+            maestro_config=(cfg.run.maestro_config or "").strip() or None,
         )
     )
     duration_s = time.monotonic() - t0

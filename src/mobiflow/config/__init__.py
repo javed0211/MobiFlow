@@ -130,14 +130,21 @@ class DeviceConfig(BaseModel):
       - ``local`` — adb / Android AVD / iOS Simulator (default)
       - ``browserstack`` — BrowserStack App Automate Maestro REST API
       - ``testmu`` — TestMu AI (formerly LambdaTest) HyperExecute Maestro
+      - ``maestro`` — first-party Maestro Cloud (`maestro cloud`)
     """
 
-    provider: str = "local"  # local | browserstack | testmu
+    provider: str = "local"  # local | browserstack | testmu | maestro
     platform: str = "android"  # android | ios
     app_id: str = ""
     device_id: str | None = None  # local serial/UDID OR cloud device name
     auto_start: bool = True  # local only: start AVD / iOS Simulator if none online
     boot_timeout_s: int = 120  # wait for emulator/simulator boot
+    # Prefer `maestro start-device` / `maestro list-devices` before adb/simctl
+    use_maestro_cli: bool = True
+    # Optional Maestro start-device model/os (e.g. iPhone-16, pixel_7, iOS-18-2)
+    device_model: str = ""
+    device_os: str = ""
+    device_locale: str = ""
 
     # Cloud labs (BrowserStack / TestMu)
     app_path: str = ""  # local .apk / .ipa / .aab to upload
@@ -171,6 +178,8 @@ class RunConfig(BaseModel):
     explore_steps: int = 5  # max live explore actions before codegen
     timeout_s: int = 180  # maestro test timeout
     save_artifacts: bool = True
+    # Local: run `maestro record --local` after test to capture MP4 (cloud labs use lab video)
+    video: bool = True
     # Reporting: junit | html (comma-string or list). Empty / none disables.
     reports: list[str] = Field(default_factory=lambda: ["junit", "html"])
     report_dir: str = ".mobiflow/reports"  # relative to project path
@@ -184,6 +193,10 @@ class RunConfig(BaseModel):
     env: dict[str, str] = Field(default_factory=dict)  # Maestro --env KEY=VALUE
     # Lifecycle: install (local adb/simctl) and/or clear (Maestro clearState)
     preflight: list[str] = Field(default_factory=list)
+    # Maestro workspace / suite filters (passed to `maestro test`)
+    include_tags: list[str] = Field(default_factory=list)
+    exclude_tags: list[str] = Field(default_factory=list)
+    maestro_config: str = ""  # path to Maestro config.yaml (optional)
 
     @field_validator("reports", mode="before")
     @classmethod
@@ -240,6 +253,18 @@ class RunConfig(BaseModel):
                 continue
             out[k] = "" if val is None else str(val)
         return out
+
+    @field_validator("include_tags", "exclude_tags", mode="before")
+    @classmethod
+    def _coerce_tags(cls, v: Any) -> list[str]:
+        if v is None or v == "":
+            return []
+        if isinstance(v, str):
+            parts = [p.strip() for p in v.replace(";", ",").split(",")]
+            return [p for p in parts if p]
+        if isinstance(v, (list, tuple, set)):
+            return [str(x).strip() for x in v if str(x).strip()]
+        return [str(v).strip()] if str(v).strip() else []
 
 
 class ProjectConfig(BaseModel):
@@ -357,6 +382,7 @@ def render_simple_config(config: MobiflowConfig) -> str:
     device = config.device
     discovery = llm.discovery or "default"
     codegen = llm.codegen or discovery
+    empty = '""'
 
     lines = [
         "# mobiflow.config.yaml — pick models from llm.json",
@@ -381,19 +407,23 @@ def render_simple_config(config: MobiflowConfig) -> str:
         f"  cases_dir: {stack.cases_dir}",
         "",
         "device:",
-        f"  provider: {device.provider}   # local | browserstack | testmu",
+        f"  provider: {device.provider}   # local | browserstack | testmu | maestro",
         f"  platform: {device.platform}",
-        f"  app_id: {device.app_id or '\"\"'}   # e.g. org.wikipedia / org.wikimedia.wikipedia",
-        f"  device_id: {device.device_id or '\"\"'}  # local serial/UDID OR cloud device (e.g. Google Pixel 7-13.0)",
+        f"  app_id: {device.app_id or empty}   # e.g. org.wikipedia / org.wikimedia.wikipedia",
+        f"  device_id: {device.device_id or empty}  # local serial/UDID OR cloud device (e.g. Google Pixel 7-13.0)",
         f"  auto_start: {str(device.auto_start).lower()}   # local only: start AVD / Xcode sim if none online",
+        f"  use_maestro_cli: {str(device.use_maestro_cli).lower()}   # prefer maestro start-device",
+        f"  device_model: {device.device_model or empty}",
+        f"  device_os: {device.device_os or empty}",
+        f"  device_locale: {device.device_locale or empty}",
         f"  boot_timeout_s: {device.boot_timeout_s}",
-        f"  app_path: {device.app_path or '\"\"'}   # cloud: path to .apk / .ipa to upload",
-        f"  app_url: {device.app_url or '\"\"'}    # cloud: existing bs://… or lt://… (skip upload)",
+        f"  app_path: {device.app_path or empty}   # cloud: path to .apk / .ipa to upload",
+        f"  app_url: {device.app_url or empty}    # cloud: existing bs://… or lt://… (skip upload)",
         f"  cloud_project: {device.cloud_project or 'MobiFlow'}",
-        f"  cloud_build_name: {device.cloud_build_name or '\"\"'}",
+        f"  cloud_build_name: {device.cloud_build_name or empty}",
         f"  real_mobile: {str(device.real_mobile).lower()}   # testmu: real device vs emulator/simulator",
-        f"  username_env: {device.username_env or '\"\"'}   # optional override (defaults by provider)",
-        f"  access_key_env: {device.access_key_env or '\"\"'}",
+        f"  username_env: {device.username_env or empty}   # optional override (defaults by provider)",
+        f"  access_key_env: {device.access_key_env or empty}",
         f"  cloud_timeout_s: {device.cloud_timeout_s}",
         "",
         "run:",
@@ -403,6 +433,7 @@ def render_simple_config(config: MobiflowConfig) -> str:
         f"  explore_steps: {run.explore_steps}   # max live explore actions",
         f"  timeout_s: {run.timeout_s}",
         f"  save_artifacts: {str(run.save_artifacts).lower()}",
+        f"  video: {str(run.video).lower()}       # local: maestro record --local after test",
         f"  reports: [{', '.join(run.reports) if run.reports else ''}]   # junit, html — empty disables",
         f"  report_dir: {run.report_dir}",
         f"  retries: {run.retries}       # re-run same YAML before heal (flake control)",
@@ -412,6 +443,9 @@ def render_simple_config(config: MobiflowConfig) -> str:
         f"  fail_fast: {str(run.fail_fast).lower()}   # suite: stop on first failure",
         f"  jobs: {run.jobs}           # suite parallelism (1 = sequential)",
         f"  preflight: [{', '.join(run.preflight) if run.preflight else ''}]   # install, clear",
+        f"  include_tags: [{', '.join(run.include_tags) if run.include_tags else ''}]",
+        f"  exclude_tags: [{', '.join(run.exclude_tags) if run.exclude_tags else ''}]",
+        f"  maestro_config: {run.maestro_config or empty}",
         "",
         "# Edit llm.json to add Azure / OpenAI / Anthropic / Google models.",
         "# Then change discovery: / codegen: above to the profile ids you want.",

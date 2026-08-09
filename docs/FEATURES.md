@@ -48,11 +48,13 @@ MobiFlow discovers **online** devices and **startable** targets:
 
 ```yaml
 device:
-  provider: local     # local | browserstack | testmu
+  provider: local     # local | browserstack | testmu | maestro
   platform: android   # or ios
   auto_start: true
+  use_maestro_cli: true   # prefer `maestro start-device` before adb/simctl
   boot_timeout_s: 120
   device_id: ""       # optional: AVD name, emulator-5554, or iOS UDID
+  # device_model / device_os / device_locale — passed to maestro start-device
 ```
 
 ```bash
@@ -62,9 +64,9 @@ mobiflow devices --start      # ensure one is running (auto-start if needed)
 mobiflow run cases/example.txt   # uses auto_start from config
 ```
 
-SDK paths checked: `ANDROID_HOME` / `ANDROID_SDK_ROOT`, macOS `~/Library/Android/sdk`, Windows `%LOCALAPPDATA%\Android\Sdk`.
+SDK paths checked: `ANDROID_HOME` / `ANDROID_SDK_ROOT`, macOS `~/Library/Android/sdk`, Windows `%LOCALAPPDATA%\Android\Sdk`. With `use_maestro_cli: true` (default), MobiFlow tries `maestro start-device` / `maestro list-devices` first.
 
-## Cloud device labs (BrowserStack + TestMu)
+## Cloud device labs (BrowserStack + TestMu + Maestro Cloud)
 
 Run the same Maestro flows on real devices in the cloud — no local emulator required.
 
@@ -72,14 +74,15 @@ Run the same Maestro flows on real devices in the cloud — no local emulator re
 |----------|-------------|-------------|
 | `browserstack` | App Automate Maestro REST (upload app + zip suite → build → poll) | `BROWSERSTACK_USERNAME` / `BROWSERSTACK_ACCESS_KEY` |
 | `testmu` | TestMu AI HyperExecute (uploads app, generates YAML, runs CLI) | `TESTMU_USERNAME` / `TESTMU_ACCESS_KEY` (or `LT_*`) |
+| `maestro` | Official `maestro cloud` CLI | `MAESTRO_CLOUD_API_KEY` (or `MAESTRO_API_KEY`) |
 
 ```yaml
 device:
-  provider: browserstack          # or testmu
+  provider: browserstack          # or testmu | maestro
   platform: android
-  device_id: "Google Pixel 7-13.0"  # TestMu e.g. "Pixel 6-14"
+  device_id: "Google Pixel 7-13.0"  # TestMu e.g. "Pixel 6-14"; Maestro e.g. pixel_7
   app_path: builds/app-debug.apk  # upload each run
-  # app_url: bs://…               # or reuse a previous upload
+  # app_url: bs://…               # or reuse a previous upload / Maestro app id
   cloud_project: MobiFlow
   real_mobile: true               # testmu only
   cloud_timeout_s: 1800
@@ -89,6 +92,7 @@ device:
 export BROWSERSTACK_USERNAME=...
 export BROWSERSTACK_ACCESS_KEY=...
 # or: TESTMU_USERNAME / TESTMU_ACCESS_KEY (LT_USERNAME / LT_ACCESS_KEY also work)
+# or: MAESTRO_CLOUD_API_KEY=...
 
 mobiflow status                 # shows cloud readiness
 mobiflow run cases/example.txt  # uploads + executes on the cloud device
@@ -99,6 +103,7 @@ Notes:
 
 - Adaptive hierarchy heal is **local-only**; cloud heal uses failure logs.
 - TestMu auto-downloads the HyperExecute CLI to `~/.mobiflow/bin` on first run.
+- Maestro Cloud runs via `maestro cloud` with your API key.
 - `mobiflow init` step 3 lets you pick BrowserStack / TestMu and set device + app path.
 
 ## Dual LLM roles
@@ -280,7 +285,8 @@ first `--incremental` run treats an existing flow as **dirty** (seeded full expl
 a successful pass the stamp is written for true append detection.
 
 Cloud runs download screenshots/video/logs into `.mobiflow/runs/.../cloud/` when
-APIs expose them (BrowserStack sessions; TestMu best-effort from CLI URLs).
+APIs expose them (BrowserStack sessions; Maestro Cloud / TestMu best-effort).
+Local runs with `run.video: true` capture MP4 via `maestro record --local`.
 HTML reports link `video_url` and embed pulled screenshots.
 
 Selector memory persists under `.mobiflow/selectors/<appId>.json` and feeds
@@ -321,21 +327,46 @@ Under `.mobiflow/`:
 - `flows/<case>.yaml` — last generated flow
 - `runs/<case>-<timestamp>/` — durable run folder (flow, Maestro debug/output, screenshots)
 - `runs/<case>-<timestamp>.json` + `<case>.latest.json` — run summary
-- `reports/<case>-<timestamp>/` — JUnit + HTML (also mirrored under the run folder)
+- `reports/<case>-<timestamp>/` — JUnit + interactive HTML dashboard (also mirrored under the run folder)
 
 ```yaml
 run:
   save_artifacts: true
+  video: true                  # local: maestro record --local after test
   reports: [junit, html]       # or [] to disable
   report_dir: .mobiflow/reports
+  include_tags: []             # maestro test --include-tags
+  exclude_tags: []             # maestro test --exclude-tags
+  maestro_config: ""           # optional Maestro workspace config.yaml
 ```
 
 | Output | Path |
 |--------|------|
 | JUnit XML | `.mobiflow/reports/<case>-<ts>/junit.xml` |
-| HTML summary | `.mobiflow/reports/<case>-<ts>/report.html` |
+| HTML dashboard | `.mobiflow/reports/<case>-<ts>/index.html` (`report.html` mirror) |
+| Pack JSON | `.mobiflow/reports/<case>-<ts>/pack.json` |
+| Simple HTML | `.mobiflow/reports/<case>-<ts>/report-simple.html` (fallback card) |
 | Screenshots | `.mobiflow/runs/<case>-<ts>/screenshots/` |
+| Local video | `.mobiflow/runs/<case>-<ts>/…/*.mp4` (when `run.video: true`) |
 | Maestro debug | `.mobiflow/runs/<case>-<ts>/attempts/01/maestro-debug/` |
+
+The dashboard is a single-file SPA (`window.__MOBIFLOW_REPORT__` pack). Sample:
+[docs/samples/execution-report/](samples/execution-report/).
+
+```bash
+# Rebuild from .mobiflow/runs/*.json
+mobiflow report --out .mobiflow/reports/rebuild
+
+# Serve .mobiflow/ so screenshot relative paths resolve
+mobiflow serve --port 8765
+```
+
+UI source lives in `report-ui/` (Vite). Rebuild the embedded bundle:
+
+```bash
+cd report-ui && npm ci && npm run build
+# copies into src/mobiflow/report/static/index.html
+```
 
 Local runs pass Maestro `--debug-output`, `--test-output-dir`, and `--format JUNIT`.
 Cloud runs still get MobiFlow JUnit/HTML (with dashboard link when available).

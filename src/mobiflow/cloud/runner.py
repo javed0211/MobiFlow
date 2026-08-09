@@ -16,6 +16,7 @@ from mobiflow.cloud.base import (
     resolve_credentials,
 )
 from mobiflow.cloud.browserstack import run_browserstack
+from mobiflow.cloud.maestro_cloud import run_maestro_cloud
 from mobiflow.cloud.testmu import resolve_hyperexecute_binary, run_testmu
 
 ProgressFn = Callable[[str], None] | None
@@ -69,6 +70,10 @@ def cloud_readiness(device_cfg: Any) -> dict[str, Any]:
         info["hyperexecute"] = he or ""
         # CLI can be auto-downloaded on first run
         info["hyperexecute_installable"] = True
+    if provider == CloudProvider.MAESTRO:
+        from mobiflow.maestro import resolve_maestro_binary
+
+        info["maestro_cli"] = resolve_maestro_binary() or ""
 
     has_app = bool(info["app_path"] or info["app_url"])
     if not has_app:
@@ -133,6 +138,10 @@ async def run_on_cloud(
         )
     if request.provider == CloudProvider.TESTMU:
         return await run_testmu(
+            request, progress=progress, artifact_dir=artifact_dir
+        )
+    if request.provider == CloudProvider.MAESTRO:
+        return await run_maestro_cloud(
             request, progress=progress, artifact_dir=artifact_dir
         )
     return CloudRunResult(

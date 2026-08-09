@@ -416,6 +416,78 @@ async def start_ios_simulator(
     }
 
 
+async def _maestro_start_device(
+    *,
+    platform: str,
+    device_model: str = "",
+    device_os: str = "",
+    device_locale: str = "",
+    timeout_s: float = 120.0,
+    progress: ProgressFn = None,
+) -> dict[str, Any]:
+    """Best-effort `maestro start-device` then return a newly online device."""
+    from mobiflow.maestro import resolve_maestro_binary
+
+    binary = resolve_maestro_binary()
+    if not binary:
+        return {"ok": False, "error": "maestro_not_installed"}
+
+    plat = (platform or "android").lower()
+    if plat not in {"android", "ios", "web"}:
+        plat = "android"
+
+    args = [binary, "start-device", "--platform", plat]
+    model = (device_model or "").strip()
+    # Don't pass raw UDIDs / emulator-XXXX as --device-model
+    if model and not re.fullmatch(r"[0-9A-Fa-f-]{36}", model) and not model.startswith(
+        "emulator-"
+    ):
+        args.extend(["--device-model", model])
+    if (device_os or "").strip():
+        args.extend(["--device-os", device_os.strip()])
+    if (device_locale or "").strip():
+        args.extend(["--device-locale", device_locale.strip()])
+
+    if progress:
+        progress(f"Starting device via Maestro CLI ({plat})…")
+    result = await _run_cmd(args, timeout=max(60.0, float(timeout_s)))
+    if not result.get("ok"):
+        return {
+            "ok": False,
+            "error": "maestro_start_device_failed",
+            "stderr": result.get("stderr") or result.get("stdout") or "",
+        }
+
+    deadline = time.monotonic() + float(timeout_s)
+    while time.monotonic() < deadline:
+        connected = await list_connected_devices()
+        for d in connected:
+            if d.get("platform") == plat:
+                if progress:
+                    progress(
+                        f"Maestro device ready: {d.get('name')} ({d.get('id')})"
+                    )
+                return {
+                    "ok": True,
+                    "device": d,
+                    "started": True,
+                    "via": "maestro start-device",
+                }
+        if connected:
+            return {
+                "ok": True,
+                "device": connected[0],
+                "started": True,
+                "via": "maestro start-device",
+            }
+        await asyncio.sleep(1.5)
+    return {
+        "ok": False,
+        "error": "maestro_start_device_timeout",
+        "message": f"maestro start-device ran but no {plat} device came online",
+    }
+
+
 async def ensure_device(
     *,
     platform_pref: str = "android",
@@ -423,10 +495,15 @@ async def ensure_device(
     auto_start: bool = True,
     timeout_s: float = 120.0,
     progress: ProgressFn = None,
+    use_maestro_cli: bool = True,
+    device_model: str = "",
+    device_os: str = "",
+    device_locale: str = "",
 ) -> dict[str, Any]:
     """Return an online device; optionally start AVD / iOS sim if none connected.
 
     Preference order when auto-starting:
+    - If ``use_maestro_cli``: try ``maestro start-device`` / ``maestro list-devices``
     - If device_id set: start that AVD name or iOS UDID
     - Else platform android: first available AVD
     - Else platform ios (macOS): first available iPhone simulator
@@ -443,58 +520,71 @@ async def ensure_device(
         match = next((d for d in connected if d["id"] == device_id), None)
         if match:
             return {"ok": True, "device": match, "started": False}
-        # Maybe it's an AVD name or shutdown sim
-        if auto_start:
-            avds = await list_android_avds()
-            avd = next((a for a in avds if a["id"] == device_id or a["name"] == device_id), None)
-            if avd and avd.get("startable") == "true":
-                started = await start_android_avd(
-                    avd["name"], timeout_s=timeout_s, progress=progress
-                )
-                if started.get("ok"):
-                    return {
-                        "ok": True,
-                        "device": started["device"],
-                        "started": True,
-                        "avd": avd["name"],
-                    }
-                return started
-            if IS_MAC and re.fullmatch(r"[0-9A-Fa-f-]{36}", device_id):
-                started = await start_ios_simulator(
-                    device_id, timeout_s=timeout_s, progress=progress
-                )
-                if started.get("ok"):
-                    return {"ok": True, "device": started["device"], "started": True}
-                return started
-        return {
-            "ok": False,
-            "error": "device_not_found",
-            "message": f"Device {device_id!r} not connected and could not be started.",
-            "connected": connected,
-        }
-
-    # Prefer online device matching platform
-    for d in connected:
-        if d.get("platform") == plat:
-            _p(f"Using connected {plat} device: {d.get('name')} ({d.get('id')})")
-            return {"ok": True, "device": d, "started": False}
-    if connected:
-        _p(
-            f"No {plat} device online — using {connected[0].get('platform')} "
-            f"{connected[0].get('name')}"
-        )
-        return {"ok": True, "device": connected[0], "started": False}
+    else:
+        for d in connected:
+            if d.get("platform") == plat:
+                _p(f"Using connected {plat} device: {d.get('name')} ({d.get('id')})")
+                return {"ok": True, "device": d, "started": False}
+        if connected:
+            _p(
+                f"No {plat} device online — using {connected[0].get('platform')} "
+                f"{connected[0].get('name')}"
+            )
+            return {"ok": True, "device": connected[0], "started": False}
 
     if not auto_start:
         return {
             "ok": False,
             "error": "no_device",
             "message": "No devices connected. Start an emulator/simulator or enable auto_start.",
-            "connected": [],
+            "connected": connected,
             "targets": await list_all_targets(),
         }
 
-    # Auto-start
+    # Prefer Maestro CLI device management when available
+    if use_maestro_cli:
+        started = await _maestro_start_device(
+            platform=plat,
+            device_model=device_model or device_id or "",
+            device_os=device_os,
+            device_locale=device_locale,
+            timeout_s=timeout_s,
+            progress=progress,
+        )
+        if started.get("ok"):
+            return started
+
+    if device_id:
+        # Maybe it's an AVD name or shutdown sim
+        avds = await list_android_avds()
+        avd = next((a for a in avds if a["id"] == device_id or a["name"] == device_id), None)
+        if avd and avd.get("startable") == "true":
+            started = await start_android_avd(
+                avd["name"], timeout_s=timeout_s, progress=progress
+            )
+            if started.get("ok"):
+                return {
+                    "ok": True,
+                    "device": started["device"],
+                    "started": True,
+                    "avd": avd["name"],
+                }
+            return started
+        if IS_MAC and re.fullmatch(r"[0-9A-Fa-f-]{36}", device_id):
+            started = await start_ios_simulator(
+                device_id, timeout_s=timeout_s, progress=progress
+            )
+            if started.get("ok"):
+                return {"ok": True, "device": started["device"], "started": True}
+            return started
+        return {
+            "ok": False,
+            "error": "device_not_found",
+            "message": f"Device {device_id!r} not connected and could not be started.",
+            "connected": await list_connected_devices(),
+        }
+
+    # Auto-start via adb/simctl fallback
     if plat == "ios":
         if not IS_MAC:
             # Fall back to Android on Windows/Linux

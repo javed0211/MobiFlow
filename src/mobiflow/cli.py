@@ -334,11 +334,19 @@ def devices_cmd(
         plat = platform
         auto = True
         boot_timeout = 120
+        use_maestro_cli = True
+        device_model = ""
+        device_os = ""
+        device_locale = ""
         try:
             cfg = _load_config_or_exit(repo)
             plat = plat or cfg.device.platform
             boot_timeout = cfg.device.boot_timeout_s
             device_id = device_id or cfg.device.device_id
+            use_maestro_cli = bool(cfg.device.use_maestro_cli)
+            device_model = str(cfg.device.device_model or "")
+            device_os = str(cfg.device.device_os or "")
+            device_locale = str(cfg.device.device_locale or "")
         except SystemExit:
             plat = plat or "android"
 
@@ -352,6 +360,10 @@ def devices_cmd(
                 auto_start=auto,
                 timeout_s=float(boot_timeout),
                 progress=progress,
+                use_maestro_cli=use_maestro_cli,
+                device_model=device_model,
+                device_os=device_os,
+                device_locale=device_locale,
             )
         )
         if result.get("ok"):
@@ -590,6 +602,153 @@ def suite_cmd(
         sys.exit(1)
 
 
+@main.command("report")
+@click.option("--repo", default=None, help="Project path")
+@click.option(
+    "--out",
+    "out_dir",
+    default=None,
+    type=click.Path(file_okay=False),
+    help="Output directory (default: .mobiflow/reports/latest-pack)",
+)
+@click.option(
+    "--title",
+    default="MobiFlow Execution Report",
+    help="Pack title shown in the SPA",
+)
+@click.option(
+    "--open/--no-open",
+    "open_browser",
+    default=False,
+    help="Open index.html after writing",
+)
+def report_cmd(
+    repo: str | None,
+    out_dir: str | None,
+    title: str,
+    open_browser: bool,
+) -> None:
+    """Build a rich HTML pack report from recent .mobiflow/runs/*.json."""
+    import json
+    import webbrowser
+
+    from mobiflow.report import (
+        case_record_from_report_case,
+        build_pack,
+        env_from_config,
+        write_pack_html,
+        write_pack_json,
+    )
+    from mobiflow.reporting import ReportCase
+
+    cfg = _load_config_or_exit(repo)
+    runs_dir = cfg.artifacts_dir() / "runs"
+    if not runs_dir.is_dir():
+        console.print(f"[red]No runs found under[/red] {runs_dir}")
+        sys.exit(2)
+
+    # Prefer stamped run jsons (case-timestamp.json), skip .latest.json
+    files = sorted(
+        [
+            p
+            for p in runs_dir.glob("*.json")
+            if p.is_file() and not p.name.endswith(".latest.json")
+        ],
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    # Dedupe by case name (newest wins)
+    by_case: dict[str, Path] = {}
+    for p in files:
+        try:
+            data = json.loads(p.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        name = str(data.get("case") or p.stem)
+        if name not in by_case:
+            by_case[name] = p
+        if len(by_case) >= 50:
+            break
+
+    if not by_case:
+        console.print(f"[red]No run JSON files in[/red] {runs_dir}")
+        sys.exit(2)
+
+    report_cases: list[ReportCase] = []
+    for name, path in sorted(by_case.items()):
+        data = json.loads(path.read_text(encoding="utf-8"))
+        report_cases.append(
+            ReportCase(
+                name=name,
+                success=bool(data.get("success")),
+                summary=str(data.get("summary") or ""),
+                error=str(data.get("error") or ""),
+                task=str(data.get("task") or ""),
+                platform=str(data.get("platform") or ""),
+                provider=str(data.get("provider") or "local"),
+                device_id=str(data.get("device_id") or ""),
+                duration_s=float(data.get("duration_s") or 0.0),
+                flow_path=str(data.get("flow_path") or ""),
+                dashboard_url=str((data.get("run") or {}).get("dashboard_url") or ""),
+                build_id=str((data.get("run") or {}).get("build_id") or ""),
+                stdout=str((data.get("run") or {}).get("stdout") or ""),
+                stderr=str((data.get("run") or {}).get("stderr") or ""),
+                logs=[str(x) for x in (data.get("logs") or [])],
+                synthesis_only=bool(data.get("synthesis_only")),
+                screenshot_paths=[str(x) for x in (data.get("screenshots") or [])],
+                artifact_dir=str(data.get("artifact_dir") or ""),
+                started_at=str(data.get("started_at") or ""),
+                video_url=str((data.get("run") or {}).get("video_url") or ""),
+            )
+        )
+
+    records = [case_record_from_report_case(c) for c in report_cases]
+    pack = build_pack(
+        records,
+        title=title,
+        env=env_from_config(cfg),
+    )
+    dest = Path(out_dir) if out_dir else cfg.report_dir_path() / "latest-pack"
+    dest.mkdir(parents=True, exist_ok=True)
+    html_path = write_pack_html(pack, dest / "index.html")
+    json_path = write_pack_json(pack, dest / "pack.json")
+    (dest / "report.html").write_text(html_path.read_text(encoding="utf-8"), encoding="utf-8")
+    console.print(f"[green]Rich report[/green] → {html_path}")
+    console.print(f"[dim]Pack JSON → {json_path}[/dim]")
+    console.print("[dim]Serve artifacts with: mobiflow serve[/dim]")
+    if open_browser:
+        webbrowser.open(html_path.resolve().as_uri())
+
+
+@main.command("serve")
+@click.option("--repo", default=None, help="Project path")
+@click.option("--port", default=8765, show_default=True, type=int)
+@click.option("--bind", default="127.0.0.1", show_default=True)
+def serve_cmd(repo: str | None, port: int, bind: str) -> None:
+    """HTTP-serve ``.mobiflow/`` so report screenshots/videos load in the SPA."""
+    import http.server
+    import socketserver
+
+    cfg = _load_config_or_exit(repo)
+    root = cfg.artifacts_dir()
+    root.mkdir(parents=True, exist_ok=True)
+
+    class Handler(http.server.SimpleHTTPRequestHandler):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, directory=str(root), **kwargs)
+
+        def log_message(self, fmt: str, *args) -> None:  # noqa: A003
+            console.print(f"[dim]{self.address_string()}[/dim] {fmt % args}")
+
+    console.print(f"[bold]Serving[/bold] {root} at http://{bind}:{port}/")
+    console.print("[dim]Open a report index.html via file:// or copy under this root.[/dim]")
+    with socketserver.TCPServer((bind, port), Handler) as httpd:
+        try:
+            httpd.serve_forever()
+        except KeyboardInterrupt:
+            console.print("\n[dim]stopped[/dim]")
+
+
 @main.command("gen")
 @click.argument("goal")
 @click.option("--repo", default=None, help="Project path")
@@ -754,6 +913,10 @@ def explore_cmd(
             auto_start=cfg.device.auto_start,
             timeout_s=float(cfg.device.boot_timeout_s),
             progress=progress,
+            use_maestro_cli=bool(cfg.device.use_maestro_cli),
+            device_model=str(cfg.device.device_model or ""),
+            device_os=str(cfg.device.device_os or ""),
+            device_locale=str(cfg.device.device_locale or ""),
         )
         if not ensured.get("ok") or not ensured.get("device"):
             console.print(

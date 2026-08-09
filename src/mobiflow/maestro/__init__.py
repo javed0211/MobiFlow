@@ -289,27 +289,36 @@ _MAESTRO_SYSTEM_YAML = """You are a Maestro mobile test engineer.
 Emit ONLY valid Maestro flow YAML (appId config above ---, commands below).
 Rules:
 1) Cover EVERY goal step — launch, navigate, assert, dismiss onboarding when needed.
-2) Map goals to: launchApp, openLink, tapOn, inputText, pressKey, scroll,
-   scrollUntilVisible, swipe, assertVisible, waitForAnimationToEnd, stopApp.
+2) Prefer idiomatic Maestro commands (see docs.maestro.dev):
+   launchApp, stopApp, clearState, clearKeychain, openLink,
+   tapOn, doubleTapOn, longPressOn, inputText, eraseText, pressKey, hideKeyboard,
+   copyTextFrom, pasteText, swipe, scroll, scrollUntilVisible, extendedWaitUntil,
+   assertVisible, assertNotVisible, assertTrue, waitForAnimationToEnd,
+   takeScreenshot, setLocation, runFlow (subflows), runScript / evalScript (JS projects only).
 3) Prefer selectors from exploration results / view hierarchy when provided;
-   else stable visible text.
+   else stable visible text / accessibility ids.
 4) When exploration results include a grounded plan, follow that plan closely.
-5) iOS Settings: com.apple.Preferences. Android Settings: com.android.settings.
-6) Mobile web (https://): openLink + Safari/Chrome appId. Never emit Playwright/Appium.
-7) Wikipedia: org.wikipedia (Android) / org.wikimedia.wikipedia (iOS).
-8) After launchApp, optionally dismiss Skip/Next/Continue/Allow/Not now.
-8b) Always end happy-path flows with assertVisible (goal evidence); prefer known selectors.
-9) End the flow with stopApp.
-10) No markdown prose outside a ```yaml fence.
-11) Do NOT use evalScript/runScript — YAML commands only for this project."""
+5) Reuse: extract repeated sequences into nested flows and call with runFlow.
+   Use onFlowStart / onFlowComplete hooks for setup/teardown when helpful.
+6) iOS Settings: com.apple.Preferences. Android Settings: com.android.settings.
+7) Mobile web (https://): openLink + Safari/Chrome appId. Never emit Playwright/Appium.
+8) Wikipedia: org.wikipedia (Android) / org.wikimedia.wikipedia (iOS).
+9) After launchApp, optionally dismiss Skip/Next/Continue/Allow/Not now.
+9b) Always end happy-path flows with assertVisible (goal evidence); prefer known selectors.
+10) End the flow with stopApp.
+11) No markdown prose outside a ```yaml fence.
+12) Do NOT use evalScript/runScript — YAML commands only for this project."""
 
 _MAESTRO_SYSTEM_JS = """You are a Maestro mobile test engineer with JavaScript support enabled.
 Emit a Maestro flow YAML and, when useful, companion JavaScript files.
 
 Rules:
 1) Primary artifact: valid Maestro YAML (appId above ---, commands below).
-2) UI commands: launchApp, openLink, tapOn, inputText, pressKey, scroll,
-   scrollUntilVisible, swipe, assertVisible, waitForAnimationToEnd, stopApp.
+2) UI commands (docs.maestro.dev): launchApp, stopApp, clearState, clearKeychain, openLink,
+   tapOn, doubleTapOn, longPressOn, inputText, eraseText, pressKey, hideKeyboard,
+   copyTextFrom, pasteText, swipe, scroll, scrollUntilVisible, extendedWaitUntil,
+   assertVisible, assertNotVisible, assertTrue, waitForAnimationToEnd, takeScreenshot,
+   setLocation, runFlow (subflows).
 3) JavaScript (GraalJS / modern ES):
    - Use ${expression} for dynamic values in YAML fields.
    - Use evalScript for short inline logic (set output.*, compute values).
@@ -317,16 +326,19 @@ Rules:
    - Prefer the global `output` object to share values across steps.
    - You may use console.log for debugging; no Node.js / filesystem APIs.
    - faker may be used for synthetic data when helpful.
+   - Optional http helpers for API setup when needed.
 4) Prefer selectors from exploration results / view hierarchy when provided;
-   else stable visible text.
+   else stable visible text / accessibility ids.
 5) When exploration results include a grounded plan, follow that plan closely.
-6) iOS Settings: com.apple.Preferences. Android Settings: com.android.settings.
-7) Mobile web (https://): openLink + Safari/Chrome appId. Never emit Playwright/Appium.
-8) Wikipedia: org.wikipedia (Android) / org.wikimedia.wikipedia (iOS).
-9) After launchApp, optionally dismiss Skip/Next/Continue/Allow/Not now.
-9b) Always end happy-path flows with assertVisible (goal evidence); prefer known selectors.
-10) End the flow with stopApp.
-11) Output format — use fenced blocks:
+6) Reuse: extract repeated sequences with runFlow; use onFlowStart / onFlowComplete
+   for setup/teardown when helpful.
+7) iOS Settings: com.apple.Preferences. Android Settings: com.android.settings.
+8) Mobile web (https://): openLink + Safari/Chrome appId. Never emit Playwright/Appium.
+9) Wikipedia: org.wikipedia (Android) / org.wikimedia.wikipedia (iOS).
+10) After launchApp, optionally dismiss Skip/Next/Continue/Allow/Not now.
+10b) Always end happy-path flows with assertVisible (goal evidence); prefer known selectors.
+11) End the flow with stopApp.
+12) Output format — use fenced blocks:
     ```yaml flow.yaml
     ...
     ```
@@ -605,14 +617,27 @@ def _maestro_test_args(
     device_id: str | None = None,
     artifact_dir: Path | None = None,
     flow_env: dict[str, str] | None = None,
+    include_tags: list[str] | None = None,
+    exclude_tags: list[str] | None = None,
+    maestro_config: str | Path | None = None,
+    platform: str | None = None,
 ) -> list[str]:
     from mobiflow.secrets import maestro_env_args
 
     args = [binary, "test", str(flow_path)]
     if device_id:
         args.extend(["--device", device_id])
+    if platform and platform.lower() in {"ios", "android", "web"}:
+        args.extend(["--platform", platform.lower()])
     if flow_env:
         args.extend(maestro_env_args(flow_env))
+    if include_tags:
+        args.append("--include-tags=" + ",".join(include_tags))
+    if exclude_tags:
+        args.append("--exclude-tags=" + ",".join(exclude_tags))
+    cfg = str(maestro_config or "").strip()
+    if cfg and Path(cfg).is_file():
+        args.extend(["--config", cfg])
     if artifact_dir is not None:
         artifact_dir.mkdir(parents=True, exist_ok=True)
         debug_dir = artifact_dir / "maestro-debug"
@@ -636,6 +661,64 @@ def _maestro_test_args(
     return args
 
 
+def find_local_videos(root: Path, *, limit: int = 8) -> list[Path]:
+    """Find MP4/WebM/MOV artifacts under a Maestro run directory."""
+    if not root.exists():
+        return []
+    found: list[Path] = []
+    for path in sorted(root.rglob("*")):
+        if path.is_file() and path.suffix.lower() in {".mp4", ".webm", ".mov", ".m4v"}:
+            found.append(path)
+            if len(found) >= limit:
+                break
+    return found
+
+
+async def _maybe_record_video(
+    binary: str,
+    flow_path: Path,
+    *,
+    cwd: Path,
+    device_id: str | None,
+    artifact_dir: Path,
+    flow_env: dict[str, str] | None,
+    timeout_s: float,
+    progress: ProgressFn = None,
+) -> str:
+    """Run `maestro record --local` and return absolute video path if produced."""
+    from mobiflow.secrets import maestro_env_args
+
+    videos = artifact_dir / "videos"
+    videos.mkdir(parents=True, exist_ok=True)
+    out_mp4 = videos / "execution.mp4"
+    args = [
+        binary,
+        "record",
+        str(flow_path),
+        "--local",
+        str(out_mp4),
+    ]
+    if device_id:
+        args.extend(["--device", device_id])
+    if flow_env:
+        args.extend(maestro_env_args(flow_env))
+    debug_dir = artifact_dir / "maestro-record-debug"
+    debug_dir.mkdir(parents=True, exist_ok=True)
+    args.extend(["--debug-output", str(debug_dir)])
+    if progress:
+        progress("Recording execution video (`maestro record --local`)…")
+    result = await _run_cmd(args, timeout=timeout_s, cwd=str(cwd))
+    if out_mp4.is_file() and out_mp4.stat().st_size > 0:
+        return str(out_mp4.resolve())
+    # Some CLI versions write beside cwd / debug dir
+    for cand in find_local_videos(artifact_dir):
+        return str(cand.resolve())
+    if not result.get("ok") and progress:
+        err = (result.get("stderr") or result.get("error") or "record_failed")[:200]
+        progress(f"Video record skipped: {err}")
+    return ""
+
+
 async def run_flow_yaml(
     flow_yaml: str,
     *,
@@ -648,14 +731,19 @@ async def run_flow_yaml(
     platform: str | None = None,
     artifact_dir: Path | None = None,
     flow_env: dict[str, str] | None = None,
+    record_video: bool = False,
+    include_tags: list[str] | None = None,
+    exclude_tags: list[str] | None = None,
+    maestro_config: str | Path | None = None,
 ) -> dict[str, Any]:
     """Run Maestro YAML locally or on a cloud device lab.
 
-    When ``device_config.provider`` is ``browserstack`` or ``testmu``, uploads
-    the flow (and app) and executes via that lab instead of local ``maestro test``.
+    When ``device_config.provider`` is ``browserstack``, ``testmu``, or ``maestro``,
+    uploads the flow (and app) and executes via that lab instead of local ``maestro test``.
 
     For local runs, ``artifact_dir`` enables Maestro ``--debug-output``,
-    ``--test-output-dir``, and JUnit ``--format/--output``.
+    ``--test-output-dir``, and JUnit ``--format/--output``. When ``record_video``
+    is true, also runs ``maestro record --local`` for an MP4 artifact.
     """
     from mobiflow.cloud.base import is_cloud_provider
 
@@ -744,66 +832,78 @@ async def run_flow_yaml(
             sp.write_text(body, encoding="utf-8")
         return flow_path
 
-    def _finalize(result: dict[str, Any], root: Path) -> dict[str, Any]:
+    async def _run_local(root: Path, art: Path | None) -> dict[str, Any]:
+        flow_path = _write_bundle(root)
+        args = _maestro_test_args(
+            binary,
+            flow_path,
+            device_id=device_id,
+            artifact_dir=art,
+            flow_env=flow_env,
+            include_tags=include_tags,
+            exclude_tags=exclude_tags,
+            maestro_config=maestro_config,
+            platform=platform,
+        )
+        if progress:
+            progress(f"Running maestro test{' on ' + device_id if device_id else ''}…")
+        result = await _run_cmd(args, timeout=float(timeout_s), cwd=str(root))
         result["flow_yaml"] = flow_yaml
         result["scripts"] = scripts or {}
-        if artifact_dir is not None:
-            result["artifact_dir"] = str(artifact_dir)
-            junit = artifact_dir / "maestro-junit.xml"
+        if art is not None:
+            result["artifact_dir"] = str(art)
+            junit = art / "maestro-junit.xml"
             if junit.is_file():
                 result["maestro_junit"] = str(junit)
-            # Persist a copy of the flow used for this attempt
             try:
-                (artifact_dir / "flow.yaml").write_text(flow_yaml, encoding="utf-8")
+                (art / "flow.yaml").write_text(flow_yaml, encoding="utf-8")
             except OSError:
                 pass
-            result["maestro_debug_dir"] = str(artifact_dir / "maestro-debug")
-            result["maestro_output_dir"] = str(artifact_dir / "maestro-output")
+            result["maestro_debug_dir"] = str(art / "maestro-debug")
+            result["maestro_output_dir"] = str(art / "maestro-output")
+            video_path = ""
+            if record_video:
+                video_path = await _maybe_record_video(
+                    binary,
+                    flow_path,
+                    cwd=root,
+                    device_id=device_id,
+                    artifact_dir=art,
+                    flow_env=flow_env,
+                    timeout_s=float(timeout_s),
+                    progress=progress,
+                )
+            if not video_path:
+                found = find_local_videos(art)
+                if found:
+                    video_path = str(found[0].resolve())
+            if video_path:
+                result["video_url"] = video_path
+                # Also copy into videos/ for stable report paths
+                try:
+                    vdir = art / "videos"
+                    vdir.mkdir(parents=True, exist_ok=True)
+                    src = Path(video_path)
+                    dest = vdir / src.name
+                    if src.resolve() != dest.resolve() and src.is_file():
+                        dest.write_bytes(src.read_bytes())
+                        result["video_url"] = str(dest.resolve())
+                except OSError:
+                    pass
         result["work_dir"] = str(root)
         return result
 
     if work_dir is not None:
         work_dir.mkdir(parents=True, exist_ok=True)
-        flow_path = _write_bundle(work_dir)
-        args = _maestro_test_args(
-            binary,
-            flow_path,
-            device_id=device_id,
-            artifact_dir=artifact_dir,
-            flow_env=flow_env,
-        )
-        if progress:
-            progress(f"Running maestro test{' on ' + device_id if device_id else ''}…")
-        result = await _run_cmd(args, timeout=float(timeout_s), cwd=str(work_dir))
-        return _finalize(result, work_dir)
+        return await _run_local(work_dir, artifact_dir)
 
-    # Prefer durable artifact_dir as work root when provided
     if artifact_dir is not None:
         root = Path(artifact_dir) / "bundle"
         root.mkdir(parents=True, exist_ok=True)
-        flow_path = _write_bundle(root)
-        args = _maestro_test_args(
-            binary,
-            flow_path,
-            device_id=device_id,
-            artifact_dir=artifact_dir,
-            flow_env=flow_env,
-        )
-        if progress:
-            progress(f"Running maestro test{' on ' + device_id if device_id else ''}…")
-        result = await _run_cmd(args, timeout=float(timeout_s), cwd=str(root))
-        return _finalize(result, root)
+        return await _run_local(root, artifact_dir)
 
     with tempfile.TemporaryDirectory(prefix="mobiflow-") as tmp:
-        root = Path(tmp)
-        flow_path = _write_bundle(root)
-        args = _maestro_test_args(
-            binary, flow_path, device_id=device_id, flow_env=flow_env
-        )
-        if progress:
-            progress(f"Running maestro test{' on ' + device_id if device_id else ''}…")
-        result = await _run_cmd(args, timeout=float(timeout_s), cwd=str(root))
-        return _finalize(result, root)
+        return await _run_local(Path(tmp), None)
 
 
 async def run_mobile_task(
@@ -839,6 +939,10 @@ async def run_mobile_task(
     replay_prefix: bool = False,
     explore_goal: str | None = None,
     codegen_goal: str | None = None,
+    record_video: bool = False,
+    include_tags: list[str] | None = None,
+    exclude_tags: list[str] | None = None,
+    maestro_config: str | Path | None = None,
 ) -> dict[str, Any]:
     """Full agent loop: preflight → explore → author YAML(+JS) → run → heal.
 
@@ -905,12 +1009,35 @@ async def run_mobile_task(
             )[0]
             _p(f"Using default cloud device: {selected}")
     elif live:
+        boot_timeout = float(timeout_s or 120)
+        if device_config is not None and getattr(device_config, "boot_timeout_s", None):
+            boot_timeout = float(device_config.boot_timeout_s)
         ensured = await ensure_device(
             platform_pref=platform,
             device_id=selected or None,
             auto_start=auto_start_device,
-            timeout_s=max(90.0, float(timeout_s)),
+            timeout_s=max(90.0, boot_timeout),
             progress=_p,
+            use_maestro_cli=bool(
+                getattr(device_config, "use_maestro_cli", True)
+                if device_config is not None
+                else True
+            ),
+            device_model=(
+                str(getattr(device_config, "device_model", "") or "")
+                if device_config is not None
+                else ""
+            ),
+            device_os=(
+                str(getattr(device_config, "device_os", "") or "")
+                if device_config is not None
+                else ""
+            ),
+            device_locale=(
+                str(getattr(device_config, "device_locale", "") or "")
+                if device_config is not None
+                else ""
+            ),
         )
         if ensured.get("ok") and ensured.get("device"):
             selected = ensured["device"].get("id") or selected
@@ -1048,6 +1175,10 @@ async def run_mobile_task(
                 platform=platform,
                 artifact_dir=prefix_dir,
                 flow_env=flow_env,
+                record_video=False,
+                include_tags=include_tags,
+                exclude_tags=exclude_tags,
+                maestro_config=maestro_config,
             )
             if not prefix_run.get("ok"):
                 _p("Prefix replay failed — falling back to full explore + extend codegen.")
@@ -1212,6 +1343,10 @@ async def run_mobile_task(
                 platform=platform,
                 artifact_dir=attempt_dir,
                 flow_env=flow_env,
+                record_video=record_video and not cloud,
+                include_tags=include_tags,
+                exclude_tags=exclude_tags,
+                maestro_config=maestro_config,
             )
             attempts_meta.append(
                 {

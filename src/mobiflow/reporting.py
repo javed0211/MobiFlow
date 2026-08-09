@@ -353,9 +353,26 @@ def write_run_reports(
             write_junit_xml(case, junit_path)
         written["junit"] = str(junit_path)
     if "html" in formats:
-        html_path = report_dir / "report.html"
-        write_html_report(case, html_path)
-        written["html"] = str(html_path)
+        # Legacy lightweight HTML kept for quick glance / CI mirrors
+        simple_path = report_dir / "report-simple.html"
+        write_html_report(case, simple_path)
+        written["html_simple"] = str(simple_path)
+        try:
+            from mobiflow.report import write_rich_reports
+
+            rich = write_rich_reports(
+                [case],
+                report_dir,
+                title=f"MobiFlow — {case.name}",
+            )
+            written["html"] = rich.get("html") or rich.get("report") or ""
+            written["pack"] = rich.get("json") or ""
+        except FileNotFoundError as exc:
+            # Fall back to simple template if SPA bundle missing
+            html_path = report_dir / "report.html"
+            write_html_report(case, html_path)
+            written["html"] = str(html_path)
+            written["html_error"] = str(exc)
     # Always write a machine-readable index alongside reports
     index = {
         "case": case.name,
@@ -594,15 +611,36 @@ def write_suite_reports(
         )
         written["junit"] = str(junit_path)
     if "html" in formats:
-        html_path = report_dir / "report.html"
+        simple_path = report_dir / "report-simple.html"
         write_suite_html(
             cases,
-            html_path,
+            simple_path,
             suite_name=suite_name,
             started_at=started_at,
             duration_s=duration_s,
         )
-        written["html"] = str(html_path)
+        written["html_simple"] = str(simple_path)
+        try:
+            from mobiflow.report import write_rich_reports
+
+            rich = write_rich_reports(
+                cases,
+                report_dir,
+                title=f"MobiFlow Suite — {suite_name}",
+            )
+            written["html"] = rich.get("html") or rich.get("report") or ""
+            written["pack"] = rich.get("json") or ""
+        except FileNotFoundError as exc:
+            html_path = report_dir / "report.html"
+            write_suite_html(
+                cases,
+                html_path,
+                suite_name=suite_name,
+                started_at=started_at,
+                duration_s=duration_s,
+            )
+            written["html"] = str(html_path)
+            written["html_error"] = str(exc)
     index = {
         "suite": suite_name,
         "success": bool(cases) and all(c.success for c in cases),

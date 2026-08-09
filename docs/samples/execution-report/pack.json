@@ -1,0 +1,194 @@
+{
+  "id": "7b03b874",
+  "title": "MobiFlow Execution Report",
+  "generated_at": "2026-08-09T14:47:38Z",
+  "env": {
+    "generated_at": "2026-08-09T14:47:38Z",
+    "python": "3.12.11",
+    "platform": "Darwin 25.5.0 (arm64)",
+    "mobiflow_version": "0.1.0",
+    "maestro": "",
+    "llm_provider": "",
+    "stack_tool": "maestro",
+    "stack_language": "yaml+js",
+    "stack_runner": "maestro",
+    "repo_path": "",
+    "device": "8B9754B2-AD59-476F-924E-E243FAA609EB",
+    "app_id": "org.wikimedia.wikipedia",
+    "mobile_platform": "ios",
+    "device_provider": "local",
+    "browser": "8B9754B2-AD59-476F-924E-E243FAA609EB",
+    "url": "org.wikimedia.wikipedia"
+  },
+  "summary": {
+    "total": 2,
+    "passed": 1,
+    "failed": 1,
+    "skipped": 0,
+    "error": 0,
+    "duration_ms": 100200,
+    "prompt_tokens": 0,
+    "completion_tokens": 0,
+    "total_tokens": 0,
+    "cost": 0.0,
+    "pass_rate": 50.0
+  },
+  "cases": [
+    {
+      "id": "wikipedia_complex_search",
+      "name": "wikipedia_complex_search",
+      "status": "passed",
+      "mode": "ai",
+      "url": "org.wikimedia.wikipedia",
+      "tags": [
+        "local",
+        "ios"
+      ],
+      "title": "Search wiki",
+      "started_at": "2026-08-09T13:00:00Z",
+      "finished_at": "2026-08-09T14:47:38Z",
+      "duration_ms": 87400,
+      "phases": [
+        {
+          "name": "run",
+          "status": "success",
+          "detail": "ok",
+          "duration_ms": 87400,
+          "usage": {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+            "cost": 0.0
+          }
+        }
+      ],
+      "steps": [
+        {
+          "index": 1,
+          "action": "log",
+          "status": "pass",
+          "raw": "pass",
+          "detail": "pass",
+          "duration_ms": 0,
+          "screenshot": null,
+          "url": null,
+          "value": null,
+          "locator": null
+        }
+      ],
+      "explore_usage": {
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_tokens": 0,
+        "cost": 0.0
+      },
+      "codegen_usage": {
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_tokens": 0,
+        "cost": 0.0
+      },
+      "files_generated": [
+        "flows/wikipedia_complex_search.yaml"
+      ],
+      "heal_attempts": 0,
+      "failure_output": "",
+      "errors": [],
+      "artifacts": {
+        "flow": "flows/wikipedia_complex_search.yaml",
+        "provider": "local",
+        "device_id": "8B9754B2-AD59-476F-924E-E243FAA609EB"
+      },
+      "source_case": null,
+      "prompt": "Search wiki",
+      "total_usage": {
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_tokens": 0,
+        "cost": 0.0
+      }
+    },
+    {
+      "id": "ios_settings_js_smoke",
+      "name": "ios_settings_js_smoke",
+      "status": "failed",
+      "mode": "ai",
+      "url": "org.wikimedia.wikipedia",
+      "tags": [
+        "local",
+        "ios"
+      ],
+      "title": "Settings",
+      "started_at": "2026-08-08T22:19:09Z",
+      "finished_at": "2026-08-09T14:47:38Z",
+      "duration_ms": 12800,
+      "phases": [
+        {
+          "name": "run",
+          "status": "failed",
+          "detail": "fail",
+          "duration_ms": 12800,
+          "usage": {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+            "cost": 0.0
+          }
+        }
+      ],
+      "steps": [
+        {
+          "index": 1,
+          "action": "log",
+          "status": "info",
+          "raw": "fail",
+          "detail": "fail",
+          "duration_ms": 0,
+          "screenshot": null,
+          "url": null,
+          "value": null,
+          "locator": null
+        }
+      ],
+      "explore_usage": {
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_tokens": 0,
+        "cost": 0.0
+      },
+      "codegen_usage": {
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_tokens": 0,
+        "cost": 0.0
+      },
+      "files_generated": [],
+      "heal_attempts": 0,
+      "failure_output": "x",
+      "errors": [
+        "x",
+        "fail"
+      ],
+      "artifacts": {
+        "provider": "local",
+        "device_id": "8B9754B2-AD59-476F-924E-E243FAA609EB"
+      },
+      "source_case": null,
+      "prompt": "Settings",
+      "total_usage": {
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_tokens": 0,
+        "cost": 0.0
+      }
+    }
+  ],
+  "trends": [],
+  "insights": [
+    {
+      "severity": "fail",
+      "title": "1 failing case(s)",
+      "body": "Open Failures for stderr, screenshots, and heal attempts."
+    }
+  ]
+}

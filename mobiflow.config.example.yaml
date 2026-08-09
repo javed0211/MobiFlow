@@ -23,24 +23,30 @@ stack:
   cases_dir: cases
 
 device:
-  provider: local              # local | browserstack | testmu
+  provider: local              # local | browserstack | testmu | maestro
   platform: android
   app_id: ""                   # e.g. org.wikipedia — or set per case
   device_id: ""                # local: adb serial | AVD | UDID
                                # browserstack: "Google Pixel 7-13.0"
                                # testmu: "Pixel 6-14"
+                               # maestro cloud: device-model e.g. pixel_7 / iPhone-16
   auto_start: true             # local only — start AVD / Xcode sim if none online
+  use_maestro_cli: true        # prefer `maestro start-device` before adb/simctl
+  device_model: ""             # optional Maestro --device-model
+  device_os: ""                # optional Maestro --device-os
+  device_locale: ""            # optional e.g. en_US
   boot_timeout_s: 120
-  # --- Cloud device labs (BrowserStack / TestMu) ---
+  # --- Cloud device labs (BrowserStack / TestMu / Maestro Cloud) ---
   app_path: ""                 # path to .apk / .ipa to upload
-  app_url: ""                  # or existing bs://… / lt://… (skip upload)
+  app_url: ""                  # or existing bs://… / lt://… / Maestro app binary id
   cloud_project: MobiFlow
   cloud_build_name: ""
   real_mobile: true            # testmu: real device vs virtual
   username_env: ""             # optional; defaults:
                                #   browserstack → BROWSERSTACK_USERNAME
                                #   testmu → TESTMU_USERNAME (or LT_USERNAME)
-  access_key_env: ""           # BROWSERSTACK_ACCESS_KEY / TESTMU_ACCESS_KEY / LT_ACCESS_KEY
+                               #   maestro → MAESTRO_CLOUD_API_KEY
+  access_key_env: ""           # BROWSERSTACK_ACCESS_KEY / TESTMU_ACCESS_KEY / MAESTRO_CLOUD_API_KEY
   cloud_timeout_s: 1800
 
 run:
@@ -50,6 +56,7 @@ run:
   explore_steps: 5             # max live explore actions
   timeout_s: 180
   save_artifacts: true
+  video: true                  # local: maestro record --local after test
   reports: [junit, html]       # junit, html — set [] to disable
   report_dir: .mobiflow/reports
   retries: 0                   # re-run same YAML before heal (flake control)
@@ -59,3 +66,6 @@ run:
   fail_fast: false             # suite: stop on first failure
   jobs: 1                      # suite parallelism (1 = sequential)
   preflight: []                # install, clear — local lifecycle before explore/run
+  include_tags: []             # maestro test --include-tags
+  exclude_tags: []             # maestro test --exclude-tags
+  maestro_config: ""           # optional path to Maestro workspace config.yaml

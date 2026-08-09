@@ -28,8 +28,10 @@ def test_normalize_provider_aliases():
     assert normalize_provider("bs") is CloudProvider.BROWSERSTACK
     assert normalize_provider("lambdatest") is CloudProvider.TESTMU
     assert normalize_provider("testmu") is CloudProvider.TESTMU
+    assert normalize_provider("maestro") is CloudProvider.MAESTRO
     assert normalize_provider("local") is CloudProvider.LOCAL
     assert is_cloud_provider("browserstack")
+    assert is_cloud_provider("maestro")
     assert not is_cloud_provider("local")
 
 

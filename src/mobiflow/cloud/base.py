@@ -15,6 +15,7 @@ class CloudProvider(str, Enum):
     LOCAL = "local"
     BROWSERSTACK = "browserstack"
     TESTMU = "testmu"
+    MAESTRO = "maestro"
 
 
 _PROVIDER_ALIASES = {
@@ -29,6 +30,10 @@ _PROVIDER_ALIASES = {
     "testmu-ai": CloudProvider.TESTMU,
     "lambdatest": CloudProvider.TESTMU,
     "lt": CloudProvider.TESTMU,
+    "maestro": CloudProvider.MAESTRO,
+    "maestro-cloud": CloudProvider.MAESTRO,
+    "maestro_cloud": CloudProvider.MAESTRO,
+    "maestrocloud": CloudProvider.MAESTRO,
 }
 
 
@@ -37,18 +42,23 @@ def normalize_provider(value: str | None) -> CloudProvider:
     if key not in _PROVIDER_ALIASES:
         raise ValueError(
             f"Unknown device.provider {value!r}. "
-            "Use: local | browserstack | testmu"
+            "Use: local | browserstack | testmu | maestro"
         )
     return _PROVIDER_ALIASES[key]
 
 
 def is_cloud_provider(value: str | CloudProvider | None) -> bool:
     if isinstance(value, CloudProvider):
-        return value in (CloudProvider.BROWSERSTACK, CloudProvider.TESTMU)
+        return value in (
+            CloudProvider.BROWSERSTACK,
+            CloudProvider.TESTMU,
+            CloudProvider.MAESTRO,
+        )
     try:
         return normalize_provider(value) in (
             CloudProvider.BROWSERSTACK,
             CloudProvider.TESTMU,
+            CloudProvider.MAESTRO,
         )
     except ValueError:
         return False
@@ -68,6 +78,9 @@ def default_credential_env_names(provider: CloudProvider) -> tuple[str, str]:
     if provider == CloudProvider.TESTMU:
         # Prefer TestMu names; fall back to legacy LambdaTest names at resolve time.
         return "TESTMU_USERNAME", "TESTMU_ACCESS_KEY"
+    if provider == CloudProvider.MAESTRO:
+        # Maestro Cloud uses a single API key (stored in access_key slot).
+        return "MAESTRO_CLOUD_API_KEY", "MAESTRO_CLOUD_API_KEY"
     return "", ""
 
 
@@ -85,6 +98,22 @@ def resolve_credentials(
 
     username = os.environ.get(user_env, "").strip()
     access_key = os.environ.get(key_env, "").strip()
+
+    # Maestro Cloud: single API key (also accept MAESTRO_API_KEY)
+    if provider == CloudProvider.MAESTRO:
+        for alt in ("MAESTRO_CLOUD_API_KEY", "MAESTRO_API_KEY", "MAESTRO_CLOUD_KEY"):
+            val = os.environ.get(alt, "").strip()
+            if val:
+                return CloudCredentials(
+                    username=val,
+                    access_key=val,
+                    username_env=alt,
+                    access_key_env=alt,
+                )
+        raise ValueError(
+            "Cloud credentials missing for maestro. "
+            "Export $MAESTRO_CLOUD_API_KEY (or $MAESTRO_API_KEY)."
+        )
 
     # TestMu rebrand: also accept LT_* when TESTMU_* unset
     if provider == CloudProvider.TESTMU:

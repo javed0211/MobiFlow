@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -86,10 +87,16 @@ def test_write_html_and_index(tmp_path: Path):
     written = write_run_reports(case, report_dir, formats=["junit", "html"])
     assert Path(written["junit"]).is_file()
     html = Path(written["html"]).read_text(encoding="utf-8")
-    assert "PASSED" in html
-    assert "browserstack" in html
-    assert "Open cloud dashboard" in html
+    assert "window.__MOBIFLOW_REPORT__" in html
+    assert "settings" in html
+    pack = json.loads((report_dir / "pack.json").read_text(encoding="utf-8"))
+    case0 = pack["cases"][0]
+    assert case0["artifacts"]["provider"] == "browserstack"
+    assert case0["artifacts"]["dashboard_url"] == "https://example.com/dash"
+    assert "browserstack" in case0["tags"]
     assert Path(written["index"]).is_file()
+    assert (report_dir / "report-simple.html").is_file()
+    assert (report_dir / "pack.json").is_file()
 
 
 def test_collect_screenshots(tmp_path: Path):

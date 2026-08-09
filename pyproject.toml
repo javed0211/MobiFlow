@@ -48,6 +48,9 @@ mobiflow = "mobiflow.cli:main"
 [tool.hatch.build.targets.wheel]
 packages = ["src/mobiflow"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"src/mobiflow/report/static" = "mobiflow/report/static"
+
 [tool.hatch.build.targets.wheel.sources]
 "src/mobiflow" = "mobiflow"
 

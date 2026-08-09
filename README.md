@@ -180,8 +180,14 @@ Companion scripts land under `flows/scripts/`.
 
 ## Reporting
 
-Each live run can write **JUnit** + **HTML** under `.mobiflow/reports/` (and under the run folder),
-plus Maestro debug output / screenshots when running locally.
+Each live run writes **JUnit** plus a full interactive **HTML dashboard** (cases, timeline,
+logs, screenshots, cloud links) under `.mobiflow/reports/` — same SPA also under the run folder.
+Open `index.html` (or `report.html`). Rebuild a pack from past runs anytime:
+
+```bash
+mobiflow report --out .mobiflow/reports/latest
+mobiflow serve          # http://127.0.0.1:8765 — needed for local screenshot paths
+```
 
 ```yaml
 run:
@@ -189,6 +195,7 @@ run:
   report_dir: .mobiflow/reports
 ```
 
+Sample dashboard: [docs/samples/execution-report/](docs/samples/execution-report/).
 Suites write aggregate reports under `.mobiflow/reports/suite-<name>-<ts>/`.
 GitHub Actions (`.github/workflows/ci.yml`) runs lint + unit tests; set
 `MOBIFLOW_CLOUD_CI=true` plus cloud/LLM secrets for an optional smoke suite job.
