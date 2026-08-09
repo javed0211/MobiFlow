@@ -274,8 +274,12 @@ if [[ "$DO_NPM" -eq 1 ]]; then
     info "Would run: npm publish --access public"
   else
     info "Publishing to npm"
-    npm publish --access public
-    ok "npm: mobiflow@${VERSION}"
+    if [[ -n "${NPM_OTP:-}" ]]; then
+      npm publish --access public --otp="$NPM_OTP"
+    else
+      npm publish --access public
+    fi
+    ok "npm: $(node -p "require('./package.json').name")@${VERSION}"
   fi
 fi
 
