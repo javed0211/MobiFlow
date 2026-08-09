@@ -13,8 +13,15 @@ The **npm package** is a thin Node launcher so users can run `npx mobiflow` / `n
 ./publish.sh 0.2.0 --yes      # skip confirmation
 ```
 
-`0.2.0` updates both `pyproject.toml` and `package.json`, auto-commits
-`Bump version to 0.2.0`, then publishes. Use `--no-commit` to leave the bump unstaged.
+Notes:
+  `npm login` unlocks **npm only**. PyPI is a separate token
+  (`TWINE_PASSWORD` / `~/.pypirc`). Without it, `./publish.sh` skips PyPI
+  automatically and still publishes to npm.
+
+```bash
+./publish.sh 0.2.0 --npm-only --yes    # force npm-only
+./publish.sh 0.2.0 --pypi-only --yes   # requires PyPI token
+```
 
 | File | Field |
 |------|--------|

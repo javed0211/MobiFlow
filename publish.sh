@@ -20,27 +20,32 @@ DO_TESTS=1
 DO_COMMIT=1
 ASSUME_YES=0
 REQUESTED_VERSION=""
+PYPI_EXPLICIT=0
+NPM_EXPLICIT=0
 
 usage() {
   cat <<'EOF'
 publish.sh — release MobiFlow to PyPI + npm (and optionally tag/push).
 
 Usage:
-  ./publish.sh 0.2.0                 # set version in pyproject + package.json, publish
-  ./publish.sh v0.2.0 --dry-run      # bump locally, no upload / push / commit
+  ./publish.sh 0.2.0                 # bump version, publish
+  ./publish.sh v0.2.0 --dry-run
   ./publish.sh --version 0.2.0
-  ./publish.sh                       # use existing matching versions
-  ./publish.sh 0.2.0 --npm-only
-  ./publish.sh 0.2.0 --pypi-only
+  ./publish.sh 0.2.0 --npm-only      # npm only (uses npm login — no PyPI token)
+  ./publish.sh 0.2.0 --pypi-only     # PyPI only (needs TWINE_PASSWORD / ~/.pypirc)
   ./publish.sh 0.2.0 --skip-tests
   ./publish.sh 0.2.0 --skip-tag
-  ./publish.sh 0.2.0 --no-commit     # bump files but do not auto-commit
+  ./publish.sh 0.2.0 --no-commit
   ./publish.sh 0.2.0 --yes
 
+Notes:
+  npm login is enough for npm publish. It does NOT unlock PyPI.
+  Without a PyPI token, PyPI is skipped automatically (unless --pypi-only).
+
 Credentials:
+  npm:  npm login
   PyPI: TWINE_USERNAME=__token__  TWINE_PASSWORD=pypi-...
         (or ~/.pypirc)
-  npm:  npm login   (or NPM_TOKEN)
 EOF
   exit "${1:-0}"
 }
@@ -60,8 +65,8 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     -h|--help) usage 0 ;;
     --dry-run) DRY_RUN=1 ;;
-    --npm-only) DO_PYPI=0; DO_NPM=1 ;;
-    --pypi-only) DO_PYPI=1; DO_NPM=0 ;;
+    --npm-only) DO_PYPI=0; DO_NPM=1; NPM_EXPLICIT=1 ;;
+    --pypi-only) DO_PYPI=1; DO_NPM=0; PYPI_EXPLICIT=1 ;;
     --skip-tests) DO_TESTS=0 ;;
     --skip-tag) DO_TAG=0 ;;
     --no-commit) DO_COMMIT=0 ;;
@@ -243,28 +248,16 @@ if [[ "$DO_TESTS" -eq 1 ]]; then
   ok "tests passed"
 fi
 
-# --- PyPI ---
-if [[ "$DO_PYPI" -eq 1 ]]; then
-  info "Building Python package ${VERSION}"
-  "$PYTHON" -m pip install -q --upgrade build twine
-  rm -rf dist build *.egg-info src/*.egg-info
-  "$PYTHON" -m build
-  "$PYTHON" -m twine check dist/*
-  ok "sdist + wheel OK"
-
-  if [[ "$DRY_RUN" -eq 1 ]]; then
-    info "Would run: twine upload dist/*"
-  else
-    info "Uploading to PyPI"
-    if [[ -n "${TWINE_PASSWORD:-}" ]]; then
-      export TWINE_USERNAME="${TWINE_USERNAME:-__token__}"
-    fi
-    "$PYTHON" -m twine upload dist/*
-    ok "PyPI: mobiflow==${VERSION}"
+has_pypi_creds() {
+  [[ -n "${TWINE_PASSWORD:-}" ]] && return 0
+  [[ -n "${PYPI_TOKEN:-}" ]] && return 0
+  if [[ -f "${HOME}/.pypirc" ]] && grep -qE 'password\s*=' "${HOME}/.pypirc" 2>/dev/null; then
+    return 0
   fi
-fi
+  return 1
+}
 
-# --- npm ---
+# --- npm first (uses npm login; no PyPI token) ---
 if [[ "$DO_NPM" -eq 1 ]]; then
   info "Checking npm auth"
   if ! npm whoami >/dev/null 2>&1; then
@@ -283,6 +276,41 @@ if [[ "$DO_NPM" -eq 1 ]]; then
     info "Publishing to npm"
     npm publish --access public
     ok "npm: mobiflow@${VERSION}"
+  fi
+fi
+
+# --- PyPI (separate credentials from npm) ---
+if [[ "$DO_PYPI" -eq 1 ]]; then
+  if ! has_pypi_creds; then
+    if [[ "$PYPI_EXPLICIT" -eq 1 ]]; then
+      die "PyPI token required for --pypi-only. Set TWINE_PASSWORD=pypi-... or configure ~/.pypirc
+    npm login does not provide PyPI access."
+    fi
+    info "Skipping PyPI (no TWINE_PASSWORD / ~/.pypirc) — npm login is not used for PyPI"
+    info "Later: TWINE_USERNAME=__token__ TWINE_PASSWORD=pypi-… ./publish.sh ${VERSION} --pypi-only --skip-tag --yes"
+  else
+    info "Building Python package ${VERSION}"
+    "$PYTHON" -m pip install -q --upgrade build twine
+    rm -rf dist build *.egg-info src/*.egg-info
+    "$PYTHON" -m build
+    "$PYTHON" -m twine check dist/*
+    ok "sdist + wheel OK"
+
+    if [[ -n "${PYPI_TOKEN:-}" && -z "${TWINE_PASSWORD:-}" ]]; then
+      export TWINE_PASSWORD="$PYPI_TOKEN"
+    fi
+    export TWINE_USERNAME="${TWINE_USERNAME:-__token__}"
+    # Never hang on an interactive password prompt
+    export TWINE_NON_INTERACTIVE=1
+
+    if [[ "$DRY_RUN" -eq 1 ]]; then
+      info "Would run: twine upload dist/*"
+    else
+      info "Uploading to PyPI"
+      "$PYTHON" -m twine upload --non-interactive dist/* 2>/dev/null \
+        || "$PYTHON" -m twine upload dist/*
+      ok "PyPI: mobiflow==${VERSION}"
+    fi
   fi
 fi
 
@@ -313,6 +341,9 @@ fi
 echo
 info "Done."
 [[ "$DRY_RUN" -eq 1 ]] && echo "    (dry-run — nothing uploaded)"
-echo "    pip install mobiflow==${VERSION}"
 echo "    npx mobiflow@${VERSION} --help"
+echo "    npm install -g mobiflow@${VERSION}"
+if has_pypi_creds || [[ "$DO_PYPI" -eq 0 ]]; then
+  echo "    pip install mobiflow==${VERSION}   # after PyPI upload"
+fi
 echo "    docs: docs/PUBLISH.md"
