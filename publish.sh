@@ -341,8 +341,8 @@ fi
 echo
 info "Done."
 [[ "$DRY_RUN" -eq 1 ]] && echo "    (dry-run — nothing uploaded)"
-echo "    npx mobiflow@${VERSION} --help"
-echo "    npm install -g mobiflow@${VERSION}"
+echo "    npx @qubiqlabs/mobiflow@${VERSION} --help"
+echo "    npm install -g @qubiqlabs/mobiflow@${VERSION}"
 if has_pypi_creds || [[ "$DO_PYPI" -eq 0 ]]; then
   echo "    pip install mobiflow==${VERSION}   # after PyPI upload"
 fi

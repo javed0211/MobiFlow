@@ -1,7 +1,9 @@
 # Publishing MobiFlow
 
 MobiFlow’s **engine is Python** (`pip install mobiflow`).  
-The **npm package** is a thin Node launcher so users can run `npx mobiflow` / `npm i -g mobiflow`.
+The **npm package** is a thin Node launcher so users can run `npx @qubiqlabs/mobiflow` / `npm i -g @qubiqlabs/mobiflow`.
+
+Scoped package name: **`@qubiqlabs/mobiflow`** (publishes under the `qubiqlabs` org/user).
 
 ## One-shot release
 
@@ -69,8 +71,8 @@ Requires an [npmjs.com](https://www.npmjs.com) account with 2FA enabled for publ
 After publish:
 
 ```bash
-npx mobiflow@0.1.0 --help
-npm install -g mobiflow
+npx @qubiqlabs/mobiflow@0.2.0 --help
+npm install -g @qubiqlabs/mobiflow
 mobiflow --help
 ```
 
@@ -84,7 +86,7 @@ Override install source:
 
 ```bash
 export MOBIFLOW_PIP_SPEC='git+https://github.com/javed0211/MobiFlow.git@main'
-npx mobiflow status
+npx @qubiqlabs/mobiflow status
 ```
 
 ---

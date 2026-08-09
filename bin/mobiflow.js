@@ -125,6 +125,9 @@ function main(argv) {
       }
       if (resolved === self) continue;
       if (resolved.includes(`${path.sep}node_modules${path.sep}`)) continue;
+      if (resolved.includes(`${path.sep}@qubiqlabs${path.sep}mobiflow${path.sep}`)) {
+        continue;
+      }
       if (resolved.includes(`${path.sep}mobiflow${path.sep}bin${path.sep}`)) {
         continue;
       }

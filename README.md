@@ -31,9 +31,9 @@ pip install -e ".[dev]"
 **npm wrapper** (launches the Python CLI; requires Python 3.11+):
 
 ```bash
-npm install -g mobiflow
+npm install -g @qubiqlabs/mobiflow
 # or
-npx mobiflow --help
+npx @qubiqlabs/mobiflow --help
 ```
 
 See [docs/PUBLISH.md](docs/PUBLISH.md) for maintainers.
