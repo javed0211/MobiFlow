@@ -342,6 +342,7 @@ def _run_init_interactive(
             "Device lab:",
             choices=[
                 questionary.Choice("Local (adb / Android AVD / iOS Simulator)", value="local"),
+                questionary.Choice("Maestro Cloud (official `maestro cloud`)", value="maestro"),
                 questionary.Choice("BrowserStack App Automate (Maestro)", value="browserstack"),
                 questionary.Choice("TestMu AI / HyperExecute (Maestro)", value="testmu"),
             ],
@@ -365,23 +366,35 @@ def _run_init_interactive(
     )
     device_kwargs: dict = {"provider": str(provider), "platform": platform, "app_id": app_id}
     if provider != "local":
-        default_device = (
-            "Google Pixel 7-13.0"
-            if provider == "browserstack" and platform == "android"
-            else "iPhone 15-17.0"
-            if provider == "browserstack"
-            else "Pixel 6-14"
-            if platform == "android"
-            else "iPhone 15"
-        )
+        if provider == "maestro":
+            default_device = "pixel_7" if platform == "android" else "iPhone-16"
+            device_prompt = "Maestro Cloud device model (e.g. pixel_7, iPhone-16)"
+            app_prompt = (
+                "Path to .apk / .ipa to upload "
+                "(or leave empty if using an existing Maestro app binary id later)"
+            )
+        elif provider == "browserstack":
+            default_device = (
+                "Google Pixel 7-13.0" if platform == "android" else "iPhone 15-17.0"
+            )
+            device_prompt = "Cloud device name (comma-separated for multiple)"
+            app_prompt = (
+                "Path to .apk / .ipa to upload (or leave empty if using app_url later)"
+            )
+        else:
+            default_device = "Pixel 6-14" if platform == "android" else "iPhone 15"
+            device_prompt = "Cloud device name (comma-separated for multiple)"
+            app_prompt = (
+                "Path to .apk / .ipa to upload (or leave empty if using app_url later)"
+            )
         cloud_device = _ask_line(
-            "Cloud device name (comma-separated for multiple)",
+            device_prompt,
             what="device_id",
             default=default_device,
             required=True,
         )
         app_path = _ask_line(
-            "Path to .apk / .ipa to upload (or leave empty if using app_url later)",
+            app_prompt,
             what="app_path",
             default="",
             required=False,
@@ -389,6 +402,11 @@ def _run_init_interactive(
         device_kwargs["device_id"] = cloud_device
         device_kwargs["app_path"] = app_path
         device_kwargs["auto_start"] = False
+        if provider == "maestro":
+            console.print(
+                "[dim]Credentials: export MAESTRO_CLOUD_API_KEY=… "
+                "(or MAESTRO_API_KEY) before `mobiflow run`.[/dim]"
+            )
         if provider == "testmu":
             real = questionary.confirm(
                 "Use real devices on TestMu? (No = virtual emulator/simulator)",

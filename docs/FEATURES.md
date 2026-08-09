@@ -104,7 +104,7 @@ Notes:
 - Adaptive hierarchy heal is **local-only**; cloud heal uses failure logs.
 - TestMu auto-downloads the HyperExecute CLI to `~/.mobiflow/bin` on first run.
 - Maestro Cloud runs via `maestro cloud` with your API key.
-- `mobiflow init` step 3 lets you pick BrowserStack / TestMu and set device + app path.
+- `mobiflow init` step 3 lets you pick Local / Maestro Cloud / BrowserStack / TestMu and set device + app path.
 
 ## Dual LLM roles
 

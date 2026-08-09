@@ -18,8 +18,6 @@ const DEMO: ReportPack = {
     app_id: 'org.wikimedia.wikipedia',
     mobile_platform: 'ios',
     device_provider: 'local',
-    browser: 'iPhone 16 Pro',
-    url: 'org.wikimedia.wikipedia',
   },
   summary: {
     total: 2,

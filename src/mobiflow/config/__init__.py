@@ -146,7 +146,7 @@ class DeviceConfig(BaseModel):
     device_os: str = ""
     device_locale: str = ""
 
-    # Cloud labs (BrowserStack / TestMu)
+    # Cloud labs (BrowserStack / TestMu / Maestro Cloud)
     app_path: str = ""  # local .apk / .ipa / .aab to upload
     app_url: str = ""  # already-uploaded bs://… or lt://…
     cloud_project: str = "MobiFlow"

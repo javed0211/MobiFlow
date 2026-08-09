@@ -192,7 +192,7 @@ function CaseDetail({ c }: { c?: CaseRecord }) {
   const [tab, setTab] = useState<DetailTab>('details')
   if (!c) {
     return (
-      <div className="card detail suite-detail">
+      <div className="card detail suite-detail detail-pane">
         <div className="empty">Select a case from the suite list.</div>
       </div>
     )
@@ -230,7 +230,7 @@ function CaseDetail({ c }: { c?: CaseRecord }) {
   ]
 
   return (
-    <div className="card detail suite-detail">
+    <div className="card detail suite-detail detail-pane">
       <div className="detail-head">
         <h2 className="detail-title" title={c.title || c.name}>
           {c.title || c.name}

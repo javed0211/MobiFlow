@@ -218,7 +218,7 @@ export BROWSERSTACK_USERNAME=... BROWSERSTACK_ACCESS_KEY=...
 3. Explore app with discovery LLM (or replay prefix + gap for --incremental)
 4. Author / extend Maestro YAML (+ JS when enabled)
 5. Local: maestro test --device <id>
-   Cloud: upload app + suite → BrowserStack / TestMu HyperExecute
+   Cloud: upload app + suite → Maestro Cloud / BrowserStack / TestMu HyperExecute
 6. On fail → repair with failure log (≤ heal) → re-run
 7. Write flows/<case>.yaml (+ scripts), guidance stamp, reports under .mobiflow/
 ```

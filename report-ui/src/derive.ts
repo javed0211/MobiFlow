@@ -11,11 +11,17 @@ export function deltaPct(current: number, previous: number | undefined): number 
 }
 
 export function hostOf(c: CaseRecord): string {
-  try {
-    return new URL(c.url || '').hostname.replace(/^www\./, '')
-  } catch {
-    return c.mode || 'unknown'
+  const raw = (c.url || '').trim()
+  if (raw && !/^(ios|android)$/i.test(raw)) {
+    // Packs often store Maestro appId in `url` for compatibility.
+    if (!/^https?:\/\//i.test(raw)) return raw
+    try {
+      return new URL(raw).hostname.replace(/^www\./, '')
+    } catch {
+      return raw
+    }
   }
+  return c.mode || c.name || 'unknown'
 }
 
 export function isFailed(c: CaseRecord): boolean {
@@ -325,20 +331,20 @@ function explainFailure(c: CaseRecord): {
 
   let reason = ''
   let recommendation =
-    'Re-run with tracing enabled and compare the DOM against the generated expectations.'
+    'Re-run with artifacts enabled and compare the hierarchy / screenshots against the generated flow.'
 
   if (explore && (explore.status === 'failed' || explore.status === 'error')) {
     reason =
       useful[0] ||
       errors[0] ||
       explore.detail ||
-      'Explore failed — the browser agent could not complete the scenario.'
+      'Explore failed — the discovery agent could not complete the scenario on device.'
     recommendation =
       'Inspect the explore steps and failure output, then tighten the case guidance or App ID before re-running.'
   } else if (codegen && (codegen.status === 'failed' || codegen.status === 'error')) {
     reason = useful[0] || errors[0] || codegen.detail || 'Codegen failed to produce a Maestro flow.'
     recommendation =
-      'Check codegen logs and regenerate; confirm the codegen workspace and LLM profile are valid.'
+      'Check codegen logs and regenerate; confirm the flow workspace and LLM profile are valid.'
   } else if (verify && (verify.status === 'failed' || verify.status === 'error')) {
     reason =
       useful.find((l) => l.startsWith('ERROR:') || l.startsWith('FAILED') || l.includes('AssertionError')) ||
@@ -349,8 +355,8 @@ function explainFailure(c: CaseRecord): {
     recommendation = failedStep?.locator
       ? `Review locator ${failedStep.locator} — it did not resolve during verify.`
       : (c.heal_attempts || 0) > 1
-        ? 'Heal retries were exhausted — stabilize the failing assertion or locator, then re-run verify.'
-        : 'Open the verify failure output and fix the generated test or page expectation.'
+        ? 'Heal retries were exhausted — stabilize the failing assertion or selector, then re-run verify.'
+        : 'Open the verify failure output and fix the generated Maestro flow or assertion.'
   } else if (codegen && codegen.status === 'skipped') {
     const detail = (codegen.detail || '').toLowerCase()
     if (detail.includes('explore-only') || detail.includes('codegen not run')) {

@@ -80,22 +80,19 @@ export function SimplePage({ title, subtitle, data, mode, bare }: Props) {
   )
 
   const device = firstNonEmpty(
-    (env as { device?: string }).device,
-    env.browser,
+    env.device,
     caseDevices[0],
   )
   const appId = firstNonEmpty(
-    (env as { app_id?: string }).app_id,
-    env.url && !/^(ios|android)$/i.test(env.url) ? env.url : '',
+    env.app_id,
     caseAppIds[0],
   )
   const mobilePlatform = firstNonEmpty(
-    (env as { mobile_platform?: string }).mobile_platform,
+    env.mobile_platform,
     casePlatforms[0],
-    /^(ios|android)$/i.test(env.url || '') ? env.url : '',
   )
   const deviceProvider = firstNonEmpty(
-    (env as { device_provider?: string }).device_provider,
+    env.device_provider,
     caseProviders[0],
     'local',
   )

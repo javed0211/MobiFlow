@@ -70,21 +70,11 @@ export type EnvInfo = {
   app_id?: string
   /** ios | android */
   mobile_platform?: string
-  /** local | browserstack | testmu */
+  /** local | browserstack | testmu | maestro */
   device_provider?: string
-  /** @deprecated use device */
-  browser?: string
-  /** @deprecated use app_id */
-  url?: string
-  /** @deprecated unused in MobiFlow UI */
-  headless?: boolean
   explore_model?: string
   codegen_model?: string
-  playwright?: string
   azure_endpoint?: string | null
-  webqa_browser?: string
-  webqa_version?: string
-  webqa_codegen?: string
 }
 
 export type PackSummary = {
