@@ -1,7 +1,7 @@
 {
   "name": "mobiflow",
-  "version": "0.1.0",
-  "description": "CLI: NL → Maestro mobile flows via LLM, run on device/emulator, self-heal. (npm wrapper for the Python package)",
+  "version": "0.2.0",
+  "description": "CLI: NL \u2192 Maestro mobile flows via LLM, run on device/emulator, self-heal. (npm wrapper for the Python package)",
   "license": "Apache-2.0",
   "author": "QubiQ Labs <labs@qubiq.ai>",
   "homepage": "https://github.com/javed0211/MobiFlow",
