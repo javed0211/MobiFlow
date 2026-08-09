@@ -82,6 +82,7 @@ export function TestResults({ data }: { data: ReportPack }) {
         ]}
       />
 
+      <div key={tab} className="tab-pane">
       {tab === 'summary' ? (
         <>
           <div className="grid cols-5">
@@ -196,6 +197,7 @@ export function TestResults({ data }: { data: ReportPack }) {
       {tab === 'artifacts' ? (
         <SimplePage title="" subtitle="" data={data} mode="artifacts" bare />
       ) : null}
+      </div>
     </>
   )
 }

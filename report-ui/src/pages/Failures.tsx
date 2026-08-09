@@ -152,6 +152,7 @@ export function Failures({ data }: { data: ReportPack }) {
         ))}
       </div>
 
+      <div key={cat} className="tab-pane">
       {visible.length === 0 ? (
         <div className="card empty-state">
           <CircleAlert size={26} />
@@ -289,6 +290,7 @@ export function Failures({ data }: { data: ReportPack }) {
           </div>
         ))
       )}
+      </div>
 
       {cards.length ? (
         <div className="foot-note">

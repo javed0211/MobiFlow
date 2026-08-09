@@ -249,13 +249,15 @@ svg.lucide {
     scroll-behavior: auto;
   }
   .page-pane,
-  .detail-pane {
+  .detail-pane,
+  .tab-pane {
     animation: none;
   }
   .nav-item,
   .case-item,
   .suite-filter,
   .detail-tab,
+  .tab,
   .cat {
     transition: none !important;
   }
@@ -584,9 +586,15 @@ svg.lucide {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  transition: color 180ms ease, border-color 180ms ease;
 }
 .tab:hover { color: var(--navy); }
 .tab.active { color: var(--brand); border-bottom-color: var(--brand); }
+
+.tab-pane {
+  animation: page-enter 280ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  will-change: opacity, transform;
+}
 
 /* ---------- grid + card ---------- */
 .grid { display: grid; gap: 14px; }
@@ -1399,6 +1407,7 @@ table.data tr:last-child td { border-bottom: 0; }
   display: inline-flex;
   align-items: center;
   gap: 5px;
+  transition: background 180ms ease, color 180ms ease, border-color 180ms ease;
 }
 .detail-tab:hover { background: var(--surface-2); color: var(--navy); }
 .detail-tab.active { background: var(--brand-soft); color: var(--brand); border-color: #cbe4f6; }

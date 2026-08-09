@@ -278,6 +278,7 @@ function CaseDetail({ c }: { c?: CaseRecord }) {
       </div>
 
       <div className="detail-scroll">
+        <div key={tab} className="tab-pane">
         {tab === 'details' ? (
           <div className="detail-panel">
             <div>
@@ -607,6 +608,7 @@ function CaseDetail({ c }: { c?: CaseRecord }) {
             </div>
           </div>
         ) : null}
+        </div>
       </div>
     </div>
   )
