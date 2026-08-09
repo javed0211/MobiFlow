@@ -3,7 +3,17 @@
 MobiFlow’s **engine is Python** (`pip install mobiflow`).  
 The **npm package** is a thin Node launcher so users can run `npx mobiflow` / `npm i -g mobiflow`.
 
-Keep versions in sync:
+## One-shot release
+
+```bash
+./publish.sh              # tests → PyPI → npm → tag → push
+./publish.sh --dry-run    # no upload / push
+./publish.sh --npm-only
+./publish.sh --pypi-only
+./publish.sh --yes        # skip confirmation
+```
+
+Keep versions in sync before running:
 
 | File | Field |
 |------|--------|
