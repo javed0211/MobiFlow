@@ -1,4 +1,4 @@
-"""Tests for WebQA-style incremental / extend-explore helpers."""
+"""Tests for incremental / extend-explore helpers."""
 
 from __future__ import annotations
 
