@@ -1,4 +1,4 @@
-"""Incremental / extend-explore helpers (WebQA-style case growth).
+"""Incremental / extend-explore helpers for case growth.
 
 Modes:
 - ``unchanged`` — prior guidance matches; reuse frozen YAML

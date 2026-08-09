@@ -4,7 +4,8 @@ CLI-only mobile automation: describe a scenario in natural language,
 generate **Maestro** flow YAML with an LLM, run it on a device/emulator,
 and self-heal via a verify/repair loop — all in the terminal.
 
-Setup mirrors the WebQA CLI (`llm.json` catalog + config selectors + `init` wizard), but the runner is Maestro instead of browser-use.
+Configure LLMs with `llm.json` + `mobiflow.config.yaml`, scaffold with
+`mobiflow init`, then author cases and run them locally or in the cloud.
 
 ## Requirements
 
@@ -78,7 +79,7 @@ Step 4 (and `mobiflow setup`) probes and can install:
 
 Xcode / full Android SDK are reported but not auto-installed.
 
-## LLM configuration (same model as WebQA)
+## LLM configuration
 
 **Two files:**
 
@@ -222,9 +223,3 @@ export BROWSERSTACK_USERNAME=... BROWSERSTACK_ACCESS_KEY=...
 | [docs/CASES.md](docs/CASES.md) | Case template, run knobs, `data:`, incremental |
 | [docs/FEATURES.md](docs/FEATURES.md) | Devices, cloud, suite, JS, reporting, CI |
 | [docs/PUBLISH.md](docs/PUBLISH.md) | PyPI + npm publish steps |
-
-## Relation to test-agent-nexus Mobile Agent
-
-This CLI extracts the same ideas as the Nexus **Mobile Agent**
-(`maestro_runner_service` + Maestro CLI): NL→YAML, live device run, heal.
-It is standalone — no FastAPI / Electron / Scrum Studio required.

@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 
 def profile_to_llm_config(profile: ModelEntry) -> dict[str, Any]:
-    """Shape expected by invoke_chat_text (mirrors nexus llm_config)."""
+    """Shape expected by invoke_chat_text (provider, model, keys, Azure fields)."""
     provider = profile.provider.lower()
     cfg: dict[str, Any] = {
         "provider": "azure" if provider.startswith("azure") else provider,

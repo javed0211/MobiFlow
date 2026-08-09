@@ -1,4 +1,4 @@
-"""Terminal-only interactive setup wizard (WebQA-style)."""
+"""Terminal-only interactive setup wizard."""
 
 from __future__ import annotations
 
