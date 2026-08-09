@@ -1,0 +1,41 @@
+{
+  "name": "mobiflow",
+  "version": "0.1.0",
+  "description": "CLI: NL → Maestro mobile flows via LLM, run on device/emulator, self-heal. (npm wrapper for the Python package)",
+  "license": "Apache-2.0",
+  "author": "QubiQ Labs <labs@qubiq.ai>",
+  "homepage": "https://github.com/javed0211/MobiFlow",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/javed0211/MobiFlow.git"
+  },
+  "bugs": {
+    "url": "https://github.com/javed0211/MobiFlow/issues"
+  },
+  "keywords": [
+    "maestro",
+    "mobile",
+    "android",
+    "ios",
+    "testing",
+    "llm",
+    "cli",
+    "automation"
+  ],
+  "bin": {
+    "mobiflow": "bin/mobiflow.js"
+  },
+  "files": [
+    "bin/",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "mobiflow": "node bin/mobiflow.js",
+    "prepack": "node -e \"require('fs').accessSync('bin/mobiflow.js')\""
+  },
+  "preferGlobal": true
+}

@@ -11,3 +11,5 @@ mobiflow.config.yaml
 llm.json
 .env
 .DS_Store
+*.tgz
+node_modules/

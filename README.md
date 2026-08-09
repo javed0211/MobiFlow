@@ -18,15 +18,25 @@ Setup mirrors the WebQA CLI (`llm.json` catalog + config selectors + `init` wiza
 curl -Ls "https://get.maestro.mobile.dev" | bash
 ```
 
-## Install (dev)
+## Install
+
+**Python (recommended):**
 
 ```bash
-git clone https://github.com/javed0211/MobiFlow.git
-cd MobiFlow
-python3.12 -m venv .venv
-source .venv/bin/activate   # Windows: .venv\Scripts\activate
+pip install mobiflow
+# or from source
 pip install -e ".[dev]"
 ```
+
+**npm wrapper** (launches the Python CLI; requires Python 3.11+):
+
+```bash
+npm install -g mobiflow
+# or
+npx mobiflow --help
+```
+
+See [docs/PUBLISH.md](docs/PUBLISH.md) for maintainers.
 
 ## Quick start
 
@@ -211,6 +221,7 @@ export BROWSERSTACK_USERNAME=... BROWSERSTACK_ACCESS_KEY=...
 |-----|----------|
 | [docs/CASES.md](docs/CASES.md) | Case template, run knobs, `data:`, incremental |
 | [docs/FEATURES.md](docs/FEATURES.md) | Devices, cloud, suite, JS, reporting, CI |
+| [docs/PUBLISH.md](docs/PUBLISH.md) | PyPI + npm publish steps |
 
 ## Relation to test-agent-nexus Mobile Agent
 
