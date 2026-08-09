@@ -6,14 +6,15 @@ The **npm package** is a thin Node launcher so users can run `npx mobiflow` / `n
 ## One-shot release
 
 ```bash
-./publish.sh              # tests → PyPI → npm → tag → push
-./publish.sh --dry-run    # no upload / push
-./publish.sh --npm-only
-./publish.sh --pypi-only
-./publish.sh --yes        # skip confirmation
+./publish.sh 0.2.0            # bump version → tests → PyPI → npm → tag → push
+./publish.sh v0.2.0 --dry-run
+./publish.sh --version 0.2.0 --npm-only
+./publish.sh                  # publish current matching versions
+./publish.sh 0.2.0 --yes      # skip confirmation
 ```
 
-Keep versions in sync before running:
+`0.2.0` updates both `pyproject.toml` and `package.json`, auto-commits
+`Bump version to 0.2.0`, then publishes. Use `--no-commit` to leave the bump unstaged.
 
 | File | Field |
 |------|--------|

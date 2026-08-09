@@ -2,18 +2,10 @@
 # publish.sh — release MobiFlow to PyPI + npm (and optionally tag/push).
 #
 # Usage:
-#   ./publish.sh                  # tests → build → PyPI → npm → tag → push
-#   ./publish.sh --dry-run        # everything except upload / push
-#   ./publish.sh --npm-only
-#   ./publish.sh --pypi-only
-#   ./publish.sh --skip-tests
-#   ./publish.sh --skip-tag
-#   ./publish.sh --yes            # no confirmation prompt
-#
-# Credentials:
-#   PyPI: TWINE_USERNAME=__token__  TWINE_PASSWORD=pypi-...
-#         (or ~/.pypirc)
-#   npm:  npm login   (or NPM_TOKEN)
+#   ./publish.sh 0.2.0            # bump version, then publish
+#   ./publish.sh v0.2.0 --dry-run
+#   ./publish.sh --version 0.2.0 --npm-only
+#   ./publish.sh                  # publish current pyproject/package version
 #
 set -euo pipefail
 
@@ -25,20 +17,25 @@ DO_PYPI=1
 DO_NPM=1
 DO_TAG=1
 DO_TESTS=1
+DO_COMMIT=1
 ASSUME_YES=0
+REQUESTED_VERSION=""
 
 usage() {
   cat <<'EOF'
 publish.sh — release MobiFlow to PyPI + npm (and optionally tag/push).
 
 Usage:
-  ./publish.sh                  # tests → build → PyPI → npm → tag → push
-  ./publish.sh --dry-run        # everything except upload / push
-  ./publish.sh --npm-only
-  ./publish.sh --pypi-only
-  ./publish.sh --skip-tests
-  ./publish.sh --skip-tag
-  ./publish.sh --yes            # no confirmation prompt
+  ./publish.sh 0.2.0                 # set version in pyproject + package.json, publish
+  ./publish.sh v0.2.0 --dry-run      # bump locally, no upload / push / commit
+  ./publish.sh --version 0.2.0
+  ./publish.sh                       # use existing matching versions
+  ./publish.sh 0.2.0 --npm-only
+  ./publish.sh 0.2.0 --pypi-only
+  ./publish.sh 0.2.0 --skip-tests
+  ./publish.sh 0.2.0 --skip-tag
+  ./publish.sh 0.2.0 --no-commit     # bump files but do not auto-commit
+  ./publish.sh 0.2.0 --yes
 
 Credentials:
   PyPI: TWINE_USERNAME=__token__  TWINE_PASSWORD=pypi-...
@@ -46,6 +43,17 @@ Credentials:
   npm:  npm login   (or NPM_TOKEN)
 EOF
   exit "${1:-0}"
+}
+
+is_version() {
+  [[ "$1" =~ ^[vV]?[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]
+}
+
+normalize_version() {
+  local v="$1"
+  v="${v#v}"
+  v="${v#V}"
+  echo "$v"
 }
 
 while [[ $# -gt 0 ]]; do
@@ -56,10 +64,27 @@ while [[ $# -gt 0 ]]; do
     --pypi-only) DO_PYPI=1; DO_NPM=0 ;;
     --skip-tests) DO_TESTS=0 ;;
     --skip-tag) DO_TAG=0 ;;
+    --no-commit) DO_COMMIT=0 ;;
     --yes|-y) ASSUME_YES=1 ;;
-    *)
+    --version)
+      shift
+      [[ $# -gt 0 ]] || { echo "error: --version needs a value" >&2; usage 1; }
+      REQUESTED_VERSION="$(normalize_version "$1")"
+      ;;
+    --version=*)
+      REQUESTED_VERSION="$(normalize_version "${1#--version=}")"
+      ;;
+    -*)
       echo "Unknown option: $1" >&2
       usage 1
+      ;;
+    *)
+      if is_version "$1"; then
+        REQUESTED_VERSION="$(normalize_version "$1")"
+      else
+        echo "Unknown argument: $1 (expected version like 0.2.0)" >&2
+        usage 1
+      fi
       ;;
   esac
   shift
@@ -84,38 +109,128 @@ done
 
 command -v npm >/dev/null 2>&1 || die "npm is required"
 command -v git >/dev/null 2>&1 || die "git is required"
+command -v node >/dev/null 2>&1 || die "node is required"
 
-# --- version sync ---
-PY_VERSION="$("$PYTHON" -c "
+read_py_version() {
+  "$PYTHON" -c "
 import re, pathlib
 t = pathlib.Path('pyproject.toml').read_text()
 m = re.search(r'^version\s*=\s*\"([^\"]+)\"', t, re.M)
 assert m, 'version not found in pyproject.toml'
 print(m.group(1))
-")"
-NPM_VERSION="$(node -p "require('./package.json').version")"
+"
+}
 
-[[ "$PY_VERSION" == "$NPM_VERSION" ]] || die \
-  "version mismatch: pyproject.toml=$PY_VERSION package.json=$NPM_VERSION"
+read_npm_version() {
+  node -p "require('./package.json').version"
+}
 
-VERSION="$PY_VERSION"
+set_versions() {
+  local ver="$1"
+  "$PYTHON" - <<PY
+from pathlib import Path
+import re, json
+
+ver = "${ver}"
+py = Path("pyproject.toml")
+text = py.read_text()
+new, n = re.subn(
+    r'^version\s*=\s*"[^"]+"',
+    f'version = "{ver}"',
+    text,
+    count=1,
+    flags=re.M,
+)
+if n != 1:
+    raise SystemExit("could not update version in pyproject.toml")
+py.write_text(new)
+
+pkg_path = Path("package.json")
+pkg = json.loads(pkg_path.read_text())
+pkg["version"] = ver
+pkg_path.write_text(json.dumps(pkg, indent=2) + "\n")
+print(f"updated pyproject.toml + package.json → {ver}")
+PY
+}
+
+PY_VERSION="$(read_py_version)"
+NPM_VERSION="$(read_npm_version)"
+
+if [[ -n "$REQUESTED_VERSION" ]]; then
+  is_version "$REQUESTED_VERSION" || die "invalid version: ${REQUESTED_VERSION}"
+  VERSION="$(normalize_version "$REQUESTED_VERSION")"
+  if [[ "$PY_VERSION" != "$VERSION" || "$NPM_VERSION" != "$VERSION" ]]; then
+    info "Bumping version ${PY_VERSION}/${NPM_VERSION} → ${VERSION}"
+    set_versions "$VERSION"
+    ok "files updated"
+  else
+    ok "already at ${VERSION}"
+  fi
+else
+  [[ "$PY_VERSION" == "$NPM_VERSION" ]] || die \
+    "version mismatch: pyproject.toml=$PY_VERSION package.json=$NPM_VERSION (pass a version to fix)"
+  VERSION="$PY_VERSION"
+fi
+
+# re-read after bump
+VERSION="$(read_py_version)"
+NPM_VERSION="$(read_npm_version)"
+[[ "$VERSION" == "$NPM_VERSION" ]] || die "version sync failed after bump"
 TAG="v${VERSION}"
 
 info "MobiFlow ${VERSION}  (tag ${TAG})"
 info "Python: $PYTHON"
-[[ "$DRY_RUN" -eq 1 ]] && info "DRY RUN — no upload / push"
+[[ "$DRY_RUN" -eq 1 ]] && info "DRY RUN — no upload / push / commit"
 
 if [[ "$ASSUME_YES" -ne 1 ]]; then
-  read -r -p "Continue publish? [y/N] " ans
+  read -r -p "Continue publish ${VERSION}? [y/N] " ans
   [[ "${ans:-}" =~ ^[Yy]$ ]] || die "aborted"
 fi
 
-# --- git hygiene ---
-if [[ -n "$(git status --porcelain)" ]]; then
-  die "working tree not clean — commit or stash first"
+# --- git: commit version bump if needed ---
+STATUS="$(git status --porcelain)"
+if [[ -n "$STATUS" ]]; then
+  OTHER="$(git status --porcelain | grep -vE ' (pyproject\.toml|package\.json)$' || true)"
+  if [[ -n "$OTHER" ]]; then
+    if [[ "$DRY_RUN" -eq 1 ]]; then
+      info "Warning: dirty tree (allowed in --dry-run):"
+      echo "$OTHER" | sed 's/^/    /'
+    else
+      die "working tree not clean — commit or stash first (aside from version bump)"
+    fi
+  fi
+  if git status --porcelain | grep -qE 'pyproject\.toml|package\.json'; then
+    if [[ "$DO_COMMIT" -eq 1 && "$DRY_RUN" -eq 0 ]]; then
+      info "Committing version bump"
+      git add pyproject.toml package.json
+      git commit -m "Bump version to ${VERSION}"
+      ok "committed version ${VERSION}"
+    elif [[ "$DRY_RUN" -eq 1 ]]; then
+      info "Would commit: Bump version to ${VERSION}"
+    else
+      info "Left version bump uncommitted (--no-commit)"
+    fi
+  fi
 fi
+
+# After optional commit, tree must be clean for a real publish
+if [[ "$DRY_RUN" -eq 0 && -n "$(git status --porcelain)" ]]; then
+  die "working tree not clean after version handling"
+fi
+
 BRANCH="$(git rev-parse --abbrev-ref HEAD)"
-ok "on branch ${BRANCH}, clean"
+ok "on branch ${BRANCH}"
+
+# Restore bumped files if dry-run exits early
+restore_dry_run_versions() {
+  if [[ "$DRY_RUN" -eq 1 && -n "$REQUESTED_VERSION" ]]; then
+    if git status --porcelain | grep -qE 'pyproject\.toml|package\.json'; then
+      info "Dry-run: restoring pyproject.toml / package.json"
+      git checkout -- pyproject.toml package.json 2>/dev/null || true
+    fi
+  fi
+}
+trap restore_dry_run_versions EXIT
 
 # --- tests ---
 if [[ "$DO_TESTS" -eq 1 ]]; then
@@ -130,7 +245,7 @@ fi
 
 # --- PyPI ---
 if [[ "$DO_PYPI" -eq 1 ]]; then
-  info "Building Python package"
+  info "Building Python package ${VERSION}"
   "$PYTHON" -m pip install -q --upgrade build twine
   rm -rf dist build *.egg-info src/*.egg-info
   "$PYTHON" -m build
