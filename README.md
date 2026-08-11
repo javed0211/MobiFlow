@@ -37,6 +37,16 @@ npm install -g @qubiqlabs/mobiflow
 npx @qubiqlabs/mobiflow --help
 ```
 
+On Windows, the wrapper prefers `py -3.12` / `py -3` (not the Microsoft Store
+`python` stub). If detection still fails:
+
+```bat
+set MOBIFLOW_PYTHON=C:\Path\To\Python312\python.exe
+mobiflow init
+```
+
+Or skip npm and run: `py -3.12 -m pip install mobiflow` then `py -3.12 -m mobiflow init`.
+
 See [docs/PUBLISH.md](docs/PUBLISH.md) for maintainers.
 
 ## Quick start
