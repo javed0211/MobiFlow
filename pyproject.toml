@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "mobiflow"
-version = "0.6.0"
+version = "0.7.0"
 description = "CLI: NL → Maestro mobile flows via LLM, run on device/emulator, self-heal before you commit."
 readme = "README.md"
 requires-python = ">=3.11"
