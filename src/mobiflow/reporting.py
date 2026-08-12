@@ -38,6 +38,8 @@ class ReportCase:
     artifact_dir: str = ""
     started_at: str = ""
     video_url: str = ""
+    explore_usage: dict[str, Any] = field(default_factory=dict)
+    codegen_usage: dict[str, Any] = field(default_factory=dict)
 
 
 def normalize_report_formats(value: Any) -> list[str]:

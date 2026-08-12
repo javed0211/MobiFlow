@@ -1,0 +1,258 @@
+# Comprehensive gesture + assertion + business-logic lab (iOS).
+# Apps: Settings (structured UI) + Maps (freeform pan / drag).
+# Pinch/zoom: not a first-class Maestro command yet — see the matching case file.
+#
+# Env (from data/ios_gesture_logic_lab.json via MobiFlow):
+#   SEARCH_TERM, EXPECTED_ROW, UNIT_PRICE, QUANTITY, TAX_RATE,
+#   DISCOUNT_PCT, MIN_ORDER_TOTAL, CURRENCY, REQUIRED_LABEL_REGEX
+
+appId: com.apple.Preferences
+name: iOS gesture & business-logic lab
+tags:
+  - smoke
+  - gestures
+  - logic
+---
+- runScript: scripts/logic_lab.js
+- evalScript: ${output.phase = 'settings-launch'}
+# Clear leftover system alerts (e.g. Maps location) before asserting Settings chrome
+- tapOn:
+    text: "Don’t Allow"
+    optional: true
+- tapOn:
+    text: "Don't Allow"
+    optional: true
+- tapOn:
+    text: "Allow"
+    optional: true
+- tapOn:
+    text: "OK"
+    optional: true
+- tapOn:
+    text: "Close"
+    optional: true
+- launchApp
+- tapOn:
+    text: "Don’t Allow"
+    optional: true
+- tapOn:
+    text: "Don't Allow"
+    optional: true
+- tapOn:
+    text: "Allow"
+    optional: true
+- extendedWaitUntil:
+    visible: "General|Wi-Fi|Bluetooth|Display|Accessibility|Apple Account|Allow|Don’t Allow|Don't Allow|.*Settings.*"
+    timeout: 15000
+- tapOn:
+    text: "Don’t Allow"
+    optional: true
+- tapOn:
+    text: "Don't Allow"
+    optional: true
+- tapOn:
+    text: "Allow"
+    optional: true
+- extendedWaitUntil:
+    visible: "General|Wi-Fi|Bluetooth|Display|Accessibility|Apple Account|.*Settings.*"
+    timeout: 12000
+
+# ---- Assertions: positive / negative / wait ----
+- assertVisible: "General|Apple Account|Accessibility"
+- assertVisible:
+    id: "com.apple.settings.general"
+    optional: true
+- assertNotVisible: "This Label Should Never Exist XYZ-999"
+- takeScreenshot: gesture-lab-settings-home
+
+# ---- Tap ----
+- tapOn: "General"
+- assertVisible: "About|Software Update|iPhone Storage|AirDrop|.*General.*"
+- tapOn:
+    text: "About"
+    optional: true
+- extendedWaitUntil:
+    visible: "Name|iOS Version|Model Name|Serial Number|.*About.*"
+    timeout: 8000
+
+# Capture a live UI value → process in JS (business / data validation)
+- copyTextFrom:
+    text: "Name|iOS Version|Model Name|General|About"
+    optional: true
+- evalScript: ${output.validateLabel(output.captureCopied())}
+- assertTrue: ${output.labelOk}
+- evalScript: ${output.phase = 'settings-back'}
+
+# Navigate back to Settings root
+- tapOn:
+    text: "General"
+    optional: true
+- tapOn:
+    text: "Settings"
+    optional: true
+- swipe:
+    direction: DOWN
+    duration: 200
+- assertVisible:
+    text: "General|Wi-Fi|Bluetooth|Display|Accessibility|Apple Account|.*Settings.*"
+    optional: true
+
+# ---- Scroll / swipe until target ----
+- scrollUntilVisible:
+    element: "Accessibility|Display.*Brightness|Battery|Privacy"
+    direction: DOWN
+    timeout: 20000
+- swipe:
+    direction: UP
+    duration: 350
+- swipe:
+    start: "50%, 70%"
+    end: "50%, 30%"
+    duration: 450
+- assertVisible:
+    text: "General|Wi-Fi|Bluetooth|Display|Accessibility|Apple Account|.*Settings.*"
+    optional: true
+
+# Long-press a row (should not crash the session)
+- longPressOn:
+    text: "General"
+    optional: true
+- tapOn:
+    point: "50%, 20%"
+    optional: true
+
+# Double-tap title
+- doubleTapOn:
+    text: "Settings"
+    optional: true
+
+# Drag approximation (Maestro 2.6.x has no `drag` command yet — long-press + slow swipe)
+- longPressOn:
+    point: "50%, 55%"
+    optional: true
+- swipe:
+    start: "50%, 55%"
+    end: "50%, 35%"
+    duration: 1200
+
+# Conditional branch when a known row is present
+- runFlow:
+    when:
+      visible: "General"
+    commands:
+      - tapOn: "General"
+      - assertVisible: "About|Software Update|AirDrop|.*General.*"
+      - tapOn:
+          text: "Settings"
+          optional: true
+
+# Return to root after conditional branch
+- tapOn:
+    text: "Settings"
+    optional: true
+- swipe:
+    direction: DOWN
+    duration: 200
+- assertVisible:
+    text: "General|Wi-Fi|Bluetooth|Display|Accessibility|Apple Account|.*Settings.*"
+    optional: true
+
+# Repeat a short gesture block
+- repeat:
+    times: 2
+    commands:
+      - swipe:
+          direction: DOWN
+          duration: 250
+      - swipe:
+          direction: UP
+          duration: 250
+
+# ---- Business logic from fixture data (cart / tax rules) ----
+# Env vars are bare identifiers inside evalScript (do not nest ${VAR}).
+- evalScript: ${output.validateOrder(Number(UNIT_PRICE), Number(QUANTITY), Number(TAX_RATE), Number(DISCOUNT_PCT), Number(MIN_ORDER_TOTAL), String(CURRENCY))}
+- assertTrue: ${output.meetsMinOrder}
+- assertTrue: ${output.taxNonNegative}
+- assertTrue: ${output.discountLtSubtotal}
+- assertTrue: ${output.currencyOk}
+- assertTrue: ${output.orderOk}
+- takeScreenshot: gesture-lab-logic-pass
+- evalScript: ${output.phase = 'maps-gestures'}
+
+# ---- Maps: freeform pan / drag / swipe (canvas gestures) ----
+- stopApp
+- launchApp:
+    appId: "com.apple.Maps"
+- extendedWaitUntil:
+    visible: "Maps|Search Maps|Cancel|Allow|Not Now|OK|Continue|.*Map.*"
+    timeout: 15000
+- tapOn:
+    text: "Don’t Allow"
+    optional: true
+- tapOn:
+    text: "Don't Allow"
+    optional: true
+- tapOn:
+    text: "Allow While Using App"
+    optional: true
+- tapOn:
+    text: "Allow"
+    optional: true
+- tapOn:
+    text: "OK"
+    optional: true
+- tapOn:
+    text: "Continue"
+    optional: true
+- tapOn:
+    text: "Not Now"
+    optional: true
+- tapOn:
+    text: "Cancel"
+    optional: true
+
+# Pan the map
+- swipe:
+    start: "50%, 55%"
+    end: "20%, 55%"
+    duration: 500
+- swipe:
+    start: "30%, 60%"
+    end: "70%, 40%"
+    duration: 600
+# Drag approximation on canvas (slow swipe; native `drag` needs newer Maestro)
+- swipe:
+    start: "45%, 50%"
+    end: "55%, 35%"
+    duration: 1400
+
+# Double-tap zoom approximation (true multi-touch pinch is not in Maestro yet)
+- doubleTapOn:
+    point: "50%, 50%"
+- swipe:
+    start: "50%, 50%"
+    end: "50%, 35%"
+    duration: 400
+- takeScreenshot: gesture-lab-maps-pan
+
+# Search: type → erase → re-type → assert
+- tapOn:
+    text: "Search Maps"
+    optional: true
+- tapOn:
+    text: "Search"
+    optional: true
+- inputText: "${SEARCH_TERM}"
+- eraseText
+- inputText: "${EXPECTED_ROW}"
+- assertVisible:
+    text: "${EXPECTED_ROW}|Search|Cancel|Directions|Results|Maps|.*General.*"
+    optional: true
+- tapOn:
+    text: "Cancel"
+    optional: true
+- takeScreenshot: gesture-lab-maps-search
+- stopApp
+
+- evalScript: ${output.phase = 'done'}
+- evalScript: ${output.labPassed = true}

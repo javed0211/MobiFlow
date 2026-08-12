@@ -488,6 +488,8 @@ def run_pipeline(
             artifact_dir=str(run_artifact_dir),
             started_at=started_at,
             video_url=str(run_meta.get("video_url") or ""),
+            explore_usage=dict(result.get("explore_usage") or {}),
+            codegen_usage=dict(result.get("codegen_usage") or {}),
         )
         maestro_junit = None
         if run_meta.get("maestro_junit"):
@@ -553,6 +555,8 @@ def run_pipeline(
             "run": result.get("run"),
             "attempts": result.get("attempts"),
             "exploration": result.get("exploration"),
+            "explore_usage": result.get("explore_usage") or {},
+            "codegen_usage": result.get("codegen_usage") or {},
             "incremental_mode": incr_mode,
             "duration_s": duration_s,
             "started_at": started_at,

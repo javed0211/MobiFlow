@@ -1,0 +1,33 @@
+@smoke @joplin @foss
+appId: net.cozic.joplin
+platform: android
+device: emulator-5554
+codegen: true
+explore: true
+exploreSteps: 4
+heal: 1
+retries: 0
+timeout: 240
+
+# Install first — see docs/SAMPLE_APPS.md (APK from joplin-android tags).
+# clearState: true
+# Optional after install:
+# data: data/joplin_smoke.json
+
+expect:
+  - Notes|All notes|Notebooks|New note|Welcome
+
+task: |
+  Open the Joplin notes app (FOSS React Native) and verify the home experience.
+
+  1. Launch Joplin
+  2. Dismiss any first-run welcome, sync setup, permission, or "Skip" / "Later"
+     / "Not now" / "Continue" sheets (all optional)
+  3. Confirm the main notes UI is visible — look for Notes, All notes, Notebooks,
+     New note, or a Welcome / get-started headline
+  4. If a New note / + control is clearly visible, tap it once (optional), then
+     go back if a note editor opened
+  5. Assert Notes|All notes|Notebooks|New note (or Welcome) is still visible
+  6. stopApp
+
+  Prefer stable visible text. Do not invent maestro.visible(). No Playwright/Appium.

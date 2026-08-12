@@ -1,0 +1,74 @@
+@smoke @gestures @logic @regression
+appId: com.apple.Preferences
+platform: ios
+codegen: false
+flow: flows/ios_gesture_logic_lab.yaml
+retries: 0
+heal: 0
+explore: false
+timeout: 300
+
+data: data/ios_gesture_logic_lab.json
+
+expect:
+  - General
+  - Maps
+
+task: |
+  Comprehensive gesture, assertion, and business-logic lab on built-in iOS apps
+  (Settings + Maps). No Wikipedia. Covers Maestro interaction surface end-to-end.
+
+  ## Apps under test
+  - com.apple.Preferences — structured rows, navigation, copyTextFrom, scroll
+  - com.apple.Maps — freeform canvas pan / drag / swipe / double-tap zoom approx
+
+  ## Gestures (must all be exercised)
+  1. Launch Settings and wait until General / Wi-Fi / Accessibility is visible
+  2. assertVisible on General (text + resource-id)
+  3. assertNotVisible on a nonsense label (negative assertion)
+  4. takeScreenshot of Settings home
+  5. tapOn General
+  6. tapOn About (optional if locale differs)
+  7. extendedWaitUntil About details (Name / iOS Version / Model Name)
+  8. copyTextFrom a visible About/General label into maestro.copiedText
+  9. Process copied text in JS: trim, regex-validate against REQUIRED_LABEL_REGEX
+  10. assertTrue that the label passes the business regex (or was empty/optional)
+  11. Navigate back to Settings root (tap + subflow settings_root)
+  12. scrollUntilVisible Accessibility / Display / Battery / Privacy
+  13. swipe UP by direction
+  14. swipe by start/end percentages
+  15. longPressOn General (optional — must not crash)
+  16. doubleTapOn Settings title (optional)
+  17. Drag approximation: longPress + slow swipe 50%,55% → 50%,35%
+      (native Maestro `drag` needs a newer CLI than 2.6.x)
+  18. Conditional runFlow when General is visible → tap General → assert → back
+  19. repeat twice: swipe DOWN then UP
+  20. BUSINESS LOGIC (data-driven cart):
+      - Read UNIT_PRICE, QUANTITY, TAX_RATE, DISCOUNT_PCT from data file
+      - Compute subtotal, discount, tax, grand total in JS (logic_lab.js)
+      - assertTrue total >= MIN_ORDER_TOTAL
+      - assertTrue tax >= 0
+      - assertTrue discount < subtotal (unless free)
+      - assertTrue CURRENCY is a 3-letter code
+  21. takeScreenshot after logic pass
+  22. stopApp Settings; launchApp Maps
+  23. Dismiss Allow / Not Now permission sheets if shown
+  24. swipe pan left across the map canvas
+  25. swipe diagonal across the map
+  26. Drag approximation on the map canvas (slow swipe)
+  27. doubleTapOn map center (zoom approximation — Maestro has no pinch yet)
+  28. swipe up from center (post double-tap)
+  29. Tap Search Maps / Search if present
+  30. inputText SEARCH_TERM
+  31. eraseText
+  32. inputText EXPECTED_ROW
+  33. assertVisible search/results chrome
+  34. Cancel search if Cancel is visible
+  35. takeScreenshot; stopApp Maps
+  36. Mark output.labPassed = true
+
+  ## Notes
+  - True multi-touch pinch/zoom is NOT in Maestro yet; double-tap + swipe is the stand-in.
+  - Cart math mirrors reading prices from UI then validating rules — swap env values
+    for copyTextFrom prices when testing a real commerce app.
+  - Frozen YAML: flows/ios_gesture_logic_lab.yaml (codegen: false).

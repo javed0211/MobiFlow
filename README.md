@@ -154,7 +154,11 @@ values flatten into Maestro `--env` / `${KEY}`.
 ```bash
 mobiflow run cases/example.txt
 mobiflow run cases/wikipedia_complex_search.txt   # iOS Wikipedia + data file
+mobiflow run cases/android_joplin_smoke.txt       # FOSS Joplin (install APK first)
+mobiflow run cases/android_bitwarden_smoke.txt    # FOSS Bitwarden (install APK first)
 ```
+
+FOSS sample apps (Joplin, Bitwarden, Wikipedia): [docs/SAMPLE_APPS.md](docs/SAMPLE_APPS.md).
 
 ## Commands
 

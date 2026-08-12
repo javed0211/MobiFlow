@@ -4,11 +4,93 @@ from __future__ import annotations
 
 import logging
 import re
+from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from mobiflow.llm_catalog import ModelEntry
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class ChatUsage:
+    """Token/cost accounting for one or more chat completions."""
+
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
+    cost: float = 0.0
+    model: str = ""
+    calls: int = 0
+
+    def merged(self, other: ChatUsage | None) -> ChatUsage:
+        if other is None:
+            return ChatUsage(
+                prompt_tokens=self.prompt_tokens,
+                completion_tokens=self.completion_tokens,
+                total_tokens=self.total_tokens,
+                cost=self.cost,
+                model=self.model or "",
+                calls=self.calls,
+            )
+        return ChatUsage(
+            prompt_tokens=self.prompt_tokens + other.prompt_tokens,
+            completion_tokens=self.completion_tokens + other.completion_tokens,
+            total_tokens=self.total_tokens + other.total_tokens,
+            cost=round(self.cost + other.cost, 6),
+            model=other.model or self.model,
+            calls=self.calls + other.calls,
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+# Approx USD per 1M tokens (input, output). Keep conservative; reports are estimates.
+_MODEL_RATES_PER_M: dict[str, tuple[float, float]] = {
+    "gpt-4o": (2.5, 10.0),
+    "gpt-4o-mini": (0.15, 0.6),
+    "gpt-4.1": (2.0, 8.0),
+    "gpt-5": (5.0, 15.0),
+    "gpt-5.4": (5.0, 15.0),
+    "o1": (15.0, 60.0),
+    "o3": (10.0, 40.0),
+    "claude-sonnet": (3.0, 15.0),
+    "claude-opus": (15.0, 75.0),
+    "gemini-2.0-flash": (0.1, 0.4),
+    "gemini-1.5-flash": (0.075, 0.3),
+}
+
+
+def estimate_chat_cost(model: str, prompt_tokens: int, completion_tokens: int) -> float:
+    name = (model or "").lower().replace("_", "-")
+    in_rate, out_rate = 2.5, 10.0  # default ≈ gpt-4o
+    for key, rates in _MODEL_RATES_PER_M.items():
+        if key in name:
+            in_rate, out_rate = rates
+            break
+    return round(
+        (max(0, prompt_tokens) / 1_000_000.0) * in_rate
+        + (max(0, completion_tokens) / 1_000_000.0) * out_rate,
+        6,
+    )
+
+
+def _usage_from_openai_response(resp: Any, model: str) -> ChatUsage:
+    usage = getattr(resp, "usage", None)
+    prompt = int(getattr(usage, "prompt_tokens", 0) or 0) if usage else 0
+    completion = int(getattr(usage, "completion_tokens", 0) or 0) if usage else 0
+    total = int(getattr(usage, "total_tokens", 0) or 0) if usage else (prompt + completion)
+    if total <= 0:
+        total = prompt + completion
+    return ChatUsage(
+        prompt_tokens=prompt,
+        completion_tokens=completion,
+        total_tokens=total,
+        cost=estimate_chat_cost(model, prompt, completion),
+        model=model,
+        calls=1,
+    )
 
 
 def profile_to_llm_config(profile: ModelEntry) -> dict[str, Any]:
@@ -37,8 +119,35 @@ def invoke_chat_text(
     max_tokens: int = 4096,
     temperature: float | None = None,
     log_prefix: str = "MobiFlow",
+    usage_out: list[ChatUsage] | None = None,
 ) -> str:
-    """Synchronous chat completion → plain text."""
+    """Synchronous chat completion → plain text.
+
+    When ``usage_out`` is provided, appends a :class:`ChatUsage` for this call.
+    """
+    text, usage = invoke_chat(
+        system,
+        user,
+        llm_config,
+        max_tokens=max_tokens,
+        temperature=temperature,
+        log_prefix=log_prefix,
+    )
+    if usage_out is not None:
+        usage_out.append(usage)
+    return text
+
+
+def invoke_chat(
+    system: str,
+    user: str,
+    llm_config: dict[str, Any],
+    *,
+    max_tokens: int = 4096,
+    temperature: float | None = None,
+    log_prefix: str = "MobiFlow",
+) -> tuple[str, ChatUsage]:
+    """Synchronous chat completion → (text, usage)."""
     provider = (llm_config.get("provider") or "openai").lower()
     temp = temperature if temperature is not None else float(llm_config.get("temperature") or 0.2)
     api_key = llm_config.get("apiKey") or ""
@@ -78,6 +187,13 @@ def invoke_chat_text(
     )
 
 
+def merge_usage_list(items: list[ChatUsage] | None) -> ChatUsage:
+    out = ChatUsage()
+    for item in items or []:
+        out = out.merged(item)
+    return out
+
+
 def _openai_compatible_chat(
     messages: list[dict[str, str]],
     llm_config: dict[str, Any],
@@ -87,7 +203,7 @@ def _openai_compatible_chat(
     log_prefix: str,
     *,
     azure: bool,
-) -> str:
+) -> tuple[str, ChatUsage]:
     from openai import AzureOpenAI, OpenAI
 
     if azure:
@@ -132,10 +248,11 @@ def _openai_compatible_chat(
             logger.error("%s LLM call failed: %s", log_prefix, first)
             raise
 
+    usage = _usage_from_openai_response(resp, str(model))
     choice = (resp.choices or [None])[0]
     if not choice or not choice.message:
-        return ""
-    return (choice.message.content or "").strip()
+        return "", usage
+    return (choice.message.content or "").strip(), usage
 
 
 def _anthropic_chat(
@@ -145,7 +262,7 @@ def _anthropic_chat(
     max_tokens: int,
     temperature: float,
     log_prefix: str,
-) -> str:
+) -> tuple[str, ChatUsage]:
     try:
         import anthropic
     except ImportError as e:
@@ -169,7 +286,19 @@ def _anthropic_chat(
         text = getattr(block, "text", None)
         if text:
             parts.append(text)
-    return "\n".join(parts).strip()
+    prompt = int(getattr(resp, "usage", None) and getattr(resp.usage, "input_tokens", 0) or 0)
+    completion = int(
+        getattr(resp, "usage", None) and getattr(resp.usage, "output_tokens", 0) or 0
+    )
+    usage = ChatUsage(
+        prompt_tokens=prompt,
+        completion_tokens=completion,
+        total_tokens=prompt + completion,
+        cost=estimate_chat_cost(str(model), prompt, completion),
+        model=str(model),
+        calls=1,
+    )
+    return "\n".join(parts).strip(), usage
 
 
 def _google_chat(
@@ -179,7 +308,7 @@ def _google_chat(
     max_tokens: int,
     temperature: float,
     log_prefix: str,
-) -> str:
+) -> tuple[str, ChatUsage]:
     """Google Gemini via REST (no heavy SDK dep)."""
     import httpx
 
@@ -204,11 +333,24 @@ def _google_chat(
         r = client.post(url, json=body)
         r.raise_for_status()
         data = r.json()
+    usage_meta = data.get("usageMetadata") or {}
+    prompt = int(usage_meta.get("promptTokenCount") or 0)
+    completion = int(usage_meta.get("candidatesTokenCount") or 0)
+    total = int(usage_meta.get("totalTokenCount") or (prompt + completion))
+    usage = ChatUsage(
+        prompt_tokens=prompt,
+        completion_tokens=completion,
+        total_tokens=total,
+        cost=estimate_chat_cost(str(model), prompt, completion),
+        model=str(model),
+        calls=1,
+    )
     try:
-        return data["candidates"][0]["content"]["parts"][0]["text"].strip()
+        text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
     except (KeyError, IndexError, TypeError) as e:
         logger.error("%s Gemini parse failed: %s — %s", log_prefix, e, data)
         raise RuntimeError(f"{log_prefix}: unexpected Gemini response") from e
+    return text, usage
 
 
 def _prefers_max_completion_tokens(model: str) -> bool:

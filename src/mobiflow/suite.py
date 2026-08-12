@@ -109,6 +109,8 @@ def _result_to_report_case(
         artifact_dir=str(result.get("artifact_dir") or ""),
         started_at=started_at,
         video_url=str(run_meta.get("video_url") or ""),
+        explore_usage=dict(result.get("explore_usage") or {}),
+        codegen_usage=dict(result.get("codegen_usage") or {}),
     )
 
 

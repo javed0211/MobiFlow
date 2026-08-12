@@ -699,6 +699,8 @@ def report_cmd(
                 artifact_dir=str(data.get("artifact_dir") or ""),
                 started_at=str(data.get("started_at") or ""),
                 video_url=str((data.get("run") or {}).get("video_url") or ""),
+                explore_usage=dict(data.get("explore_usage") or {}),
+                codegen_usage=dict(data.get("codegen_usage") or {}),
             )
         )
 

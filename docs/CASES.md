@@ -12,6 +12,10 @@ platform: android
 task: Open Wikipedia and confirm Search is visible
 ```
 
+FOSS targets beyond Wikipedia (Joplin, Bitwarden — install notes + `appId`s):
+**[SAMPLE_APPS.md](SAMPLE_APPS.md)**. Starter cases: `cases/android_joplin_smoke.txt`,
+`cases/android_bitwarden_smoke.txt`.
+
 ## Full template
 
 ```text

@@ -156,3 +156,8 @@ def test_maestro_yaml_helpers():
     y = ensure_flow_yaml("- launchApp\n", "org.wikipedia")
     assert y.startswith("appId: org.wikipedia")
     assert resolve_app_id("", "android", "open wikipedia") == "org.wikipedia"
+    assert resolve_app_id("", "ios", "open wikipedia") == "org.wikimedia.wikipedia"
+    assert resolve_app_id("", "android", "launch joplin notes") == "net.cozic.joplin"
+    assert resolve_app_id("", "ios", "open Joplin") == "net.cozic.joplin"
+    assert resolve_app_id("", "android", "open bitwarden vault") == "com.x8bit.bitwarden"
+    assert resolve_app_id("", "ios", "bitwarden login") == "com.8bit.bitwarden"

@@ -287,6 +287,19 @@ def _abs_shots(case: ReportCase) -> list[str]:
     return shots
 
 
+def _token_usage_from(raw: Any) -> TokenUsage:
+    if isinstance(raw, TokenUsage):
+        return raw
+    if not isinstance(raw, dict):
+        return TokenUsage()
+    return TokenUsage(
+        prompt_tokens=int(raw.get("prompt_tokens") or 0),
+        completion_tokens=int(raw.get("completion_tokens") or 0),
+        total_tokens=int(raw.get("total_tokens") or 0),
+        cost=float(raw.get("cost") or 0.0),
+    )
+
+
 def case_record_from_report_case(
     case: ReportCase,
     *,
@@ -369,6 +382,8 @@ def case_record_from_report_case(
         duration_ms=duration_ms,
         phases=phases,
         steps=steps,
+        explore_usage=_token_usage_from(case.explore_usage),
+        codegen_usage=_token_usage_from(case.codegen_usage),
         files_generated=[case.flow_path] if case.flow_path else [],
         heal_attempts=max(0, int(heal_attempts)),
         failure_output=(case.stderr or case.stdout or case.error or "")[:20000],

@@ -10,7 +10,7 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
-from mobiflow.llm import invoke_chat_text, profile_to_llm_config
+from mobiflow.llm import ChatUsage, invoke_chat_text, merge_usage_list, profile_to_llm_config
 from mobiflow.llm_catalog import ModelEntry
 
 logger = logging.getLogger(__name__)
@@ -119,6 +119,7 @@ class ExplorationResult:
     final_hierarchy: str = ""
     completed: bool = False
     mode: str = "device"  # device | plan_only | skipped
+    usage: ChatUsage = field(default_factory=ChatUsage)
 
     def to_prompt_block(self) -> str:
         """Serialize for codegen LLM context."""
@@ -274,6 +275,7 @@ async def decide_explore_step(
     profile: ModelEntry,
     step_index: int,
     max_steps: int,
+    usage_out: list[ChatUsage] | None = None,
 ) -> dict[str, Any]:
     llm_config = profile_to_llm_config(profile)
     user = "\n\n".join(
@@ -298,6 +300,7 @@ async def decide_explore_step(
         max_tokens=2048,
         temperature=0.2,
         log_prefix="MobiFlowExplore",
+        usage_out=usage_out,
     )
     return parse_explore_decision(text or "")
 
@@ -323,6 +326,7 @@ async def plan_only_explore(
         f"Platform: {platform}\nApp ID: {app_id}\nGoal:\n{goal}\n"
         "Return JSON with status=done, plan_so_far, selectors, notes."
     )
+    usage_bucket: list[ChatUsage] = []
     text = await asyncio.to_thread(
         invoke_chat_text,
         system,
@@ -331,6 +335,7 @@ async def plan_only_explore(
         max_tokens=2048,
         temperature=0.2,
         log_prefix="MobiFlowExplore",
+        usage_out=usage_bucket,
     )
     decision = parse_explore_decision(text or "")
     result = ExplorationResult(
@@ -342,6 +347,7 @@ async def plan_only_explore(
         notes=[decision["notes"]] if decision.get("notes") else [],
         completed=True,
         mode="plan_only",
+        usage=merge_usage_list(usage_bucket),
     )
     if decision.get("observation"):
         result.steps.append(
@@ -388,6 +394,7 @@ async def explore_app(
         mode="interactive" if interactive else "device",
     )
     history: list[str] = []
+    usage_bucket: list[ChatUsage] = []
     max_steps = max(1, min(int(max_steps or 5), 12))
     ask_fn = ask or (default_interactive_ask if interactive else None)
 
@@ -417,6 +424,7 @@ async def explore_app(
             profile=profile,
             step_index=i,
             max_steps=max_steps,
+            usage_out=usage_bucket,
         )
         if decision.get("plan"):
             result.plan = decision["plan"]
@@ -539,6 +547,7 @@ async def explore_app(
             for s in result.steps
             if s.observation
         ][:8]
+    result.usage = merge_usage_list(usage_bucket)
     return result
 
 

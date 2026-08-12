@@ -1,0 +1,33 @@
+appId: com.apple.Preferences
+---
+- launchApp
+
+- waitForAnimationToEnd
+
+# Dismiss permission dialogs if they appear
+- tapOn:
+    text: Allow
+    optional: true
+
+- tapOn:
+    text: Don’t Allow
+    optional: true
+
+- waitForAnimationToEnd
+
+# Confirm we're on the Settings root screen
+- assertVisible:
+    text: "General|Accessibility|Apple Account"
+
+- tapOn: General
+
+# Confirm General screen loaded
+- assertVisible:
+    text: "About|Software Update"
+
+- tapOn: Settings
+
+# Confirm we're back on the main Settings screen
+- assertVisible: General
+
+- stopApp

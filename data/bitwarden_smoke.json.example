@@ -1,0 +1,4 @@
+{
+  "BW_EMAIL": "you@example.com",
+  "BW_MASTER_PASSWORD": "use-local-only-never-commit-real-secrets"
+}

@@ -15,9 +15,11 @@ from pathlib import Path
 from typing import Any, Optional
 
 from mobiflow.llm import (
+    ChatUsage,
     extract_fenced_files,
     extract_yaml_fence,
     invoke_chat_text,
+    merge_usage_list,
     profile_to_llm_config,
 )
 from mobiflow.llm_catalog import ModelEntry
@@ -33,6 +35,7 @@ class FlowBundle:
 
     flow_yaml: str
     scripts: dict[str, str] = field(default_factory=dict)
+    usage: ChatUsage = field(default_factory=ChatUsage)
 
     @property
     def has_js(self) -> bool:
@@ -45,6 +48,9 @@ _KNOWN_APP_IDS = {
     "settings": {"android": "com.android.settings", "ios": "com.apple.Preferences"},
     "chrome": {"android": "com.android.chrome", "ios": "com.google.chrome.ios"},
     "safari": {"android": "com.android.chrome", "ios": "com.apple.mobilesafari"},
+    # FOSS sample apps (install yourself — see docs/SAMPLE_APPS.md)
+    "joplin": {"android": "net.cozic.joplin", "ios": "net.cozic.joplin"},
+    "bitwarden": {"android": "com.x8bit.bitwarden", "ios": "com.8bit.bitwarden"},
 }
 
 
@@ -302,9 +308,16 @@ Rules:
    Use onFlowStart / onFlowComplete hooks for setup/teardown when helpful.
 6) iOS Settings: com.apple.Preferences. Android Settings: com.android.settings.
 7) Mobile web (https://): openLink + Safari/Chrome appId. Never emit Playwright/Appium.
-8) Wikipedia: org.wikipedia (Android) / org.wikimedia.wikipedia (iOS).
+8) Known apps — use these appIds when the goal names them:
+   Wikipedia: org.wikipedia (Android) / org.wikimedia.wikipedia (iOS).
+   Joplin: net.cozic.joplin (Android + iOS).
+   Bitwarden: com.x8bit.bitwarden (Android) / com.8bit.bitwarden (iOS).
 9) After launchApp, optionally dismiss Skip/Next/Continue/Allow/Not now.
 9b) Always end happy-path flows with assertVisible (goal evidence); prefer known selectors.
+9c) Never use maestro.visible(...) / maestro.isVisible — those APIs do not exist.
+    Prefer assertVisible / assertNotVisible. For OR checks, use separate optional
+    assertVisible / extendedWaitUntil steps, or one assertVisible with a regex
+    like "General|Accessibility". Do not invent assertTrue JS helpers for visibility.
 10) End the flow with stopApp.
 11) No markdown prose outside a ```yaml fence.
 12) Do NOT use evalScript/runScript — YAML commands only for this project."""
@@ -327,6 +340,9 @@ Rules:
    - You may use console.log for debugging; no Node.js / filesystem APIs.
    - faker may be used for synthetic data when helpful.
    - Optional http helpers for API setup when needed.
+   - NEVER call maestro.visible / maestro.isVisible (undefined). Visibility checks
+     belong in YAML: assertVisible / assertNotVisible / extendedWaitUntil.
+     assertTrue is only for real JS expressions over output.* / env values.
 4) Prefer selectors from exploration results / view hierarchy when provided;
    else stable visible text / accessibility ids.
 5) When exploration results include a grounded plan, follow that plan closely.
@@ -334,9 +350,14 @@ Rules:
    for setup/teardown when helpful.
 7) iOS Settings: com.apple.Preferences. Android Settings: com.android.settings.
 8) Mobile web (https://): openLink + Safari/Chrome appId. Never emit Playwright/Appium.
-9) Wikipedia: org.wikipedia (Android) / org.wikimedia.wikipedia (iOS).
+9) Known apps — use these appIds when the goal names them:
+   Wikipedia: org.wikipedia (Android) / org.wikimedia.wikipedia (iOS).
+   Joplin: net.cozic.joplin (Android + iOS).
+   Bitwarden: com.x8bit.bitwarden (Android) / com.8bit.bitwarden (iOS).
 10) After launchApp, optionally dismiss Skip/Next/Continue/Allow/Not now.
 10b) Always end happy-path flows with assertVisible (goal evidence); prefer known selectors.
+10c) For OR visibility (A or B), prefer assertVisible with regex "A|B" or two optional
+    waits plus one hard assertVisible — never assertTrue with maestro.visible.
 11) End the flow with stopApp.
 12) Output format — use fenced blocks:
     ```yaml flow.yaml
@@ -511,6 +532,7 @@ async def generate_flow_bundle(
             "Return a complete Maestro flow in a ```yaml fence. End with stopApp."
         )
 
+    usage_bucket: list[ChatUsage] = []
     text = await asyncio.to_thread(
         invoke_chat_text,
         system,
@@ -519,8 +541,10 @@ async def generate_flow_bundle(
         max_tokens=4096,
         temperature=0.2,
         log_prefix="MobiFlow",
+        usage_out=usage_bucket,
     )
     bundle = parse_flow_bundle(text or "", app_id=resolved)
+    bundle.usage = merge_usage_list(usage_bucket)
     if extend and previous_yaml.strip():
         from mobiflow.incremental import merge_flow_yaml
 
@@ -1100,6 +1124,7 @@ async def run_mobile_task(
         mode="skipped",
     )
     exploration_prompt = ""
+    codegen_usage = ChatUsage()
     max_retries = max(0, min(int(retries or 0), 10))
     from mobiflow.selectors import (
         ensure_expect_asserts,
@@ -1269,6 +1294,7 @@ async def run_mobile_task(
         )
         flow = bundle.flow_yaml
         scripts = dict(bundle.scripts)
+        codegen_usage = codegen_usage.merged(bundle.usage)
         # Keep prior companion scripts when extend did not re-emit them
         for rel, body in seeded_scripts.items():
             scripts.setdefault(rel, body)
@@ -1290,6 +1316,8 @@ async def run_mobile_task(
         "synthesis_only": False,
         "maestro_status": status,
         "exploration": exploration.to_dict() if exploration.mode != "skipped" else None,
+        "explore_usage": exploration.usage.to_dict(),
+        "codegen_usage": codegen_usage.to_dict(),
         "preflight": preflight_meta or None,
     }
 
@@ -1426,8 +1454,10 @@ async def run_mobile_task(
         )
         flow = bundle.flow_yaml
         scripts = bundle.scripts
+        codegen_usage = codegen_usage.merged(bundle.usage)
         result["flow_yaml"] = flow
         result["scripts"] = scripts
+        result["codegen_usage"] = codegen_usage.to_dict()
 
     result["success"] = False
     result["summary"] = "Maestro flow failed after retries/heal attempts."

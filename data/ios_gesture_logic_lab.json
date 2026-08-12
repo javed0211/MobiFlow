@@ -1,0 +1,11 @@
+{
+  "search_term": "General",
+  "expected_row": "General",
+  "unit_price": 19.99,
+  "quantity": 3,
+  "tax_rate": 0.2,
+  "discount_pct": 0.1,
+  "min_order_total": 40,
+  "currency": "GBP",
+  "required_label_regex": "^[A-Za-z].{0,80}$"
+}

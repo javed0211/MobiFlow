@@ -1,0 +1,32 @@
+@smoke @bitwarden @foss
+appId: com.x8bit.bitwarden
+platform: android
+codegen: true
+explore: true
+exploreSteps: 4
+heal: 1
+retries: 0
+timeout: 240
+
+# Install first — see docs/SAMPLE_APPS.md (Play/F-Droid/GitHub APK).
+# Do not commit real vault passwords. For deeper vault flows, use a local
+# data/bitwarden_smoke.json (gitignored secrets) or case env: with env-var refs.
+# clearState: true
+
+expect:
+  - Log in|Create account|Get started|Bitwarden
+
+task: |
+  Open the Bitwarden password manager and verify the auth / welcome chrome.
+
+  1. Launch Bitwarden
+  2. Dismiss biometric prompts, notification permissions, region pickers, and
+     Skip / Not now / Continue / Later sheets (all optional)
+  3. Confirm the landing experience: Log in, Create account, Get started,
+     or a Bitwarden branded welcome / vault lock screen
+  4. Do NOT complete a real account creation or enter production vault secrets
+     in this smoke case
+  5. Assert Log in|Create account|Get started|Bitwarden is visible
+  6. stopApp
+
+  Prefer stable visible text. Do not invent maestro.visible(). No Playwright/Appium.
