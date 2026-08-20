@@ -1,4 +1,9 @@
-from mobiflow.devices import _parse_adb_devices, _parse_simctl_all, host_capabilities
+from mobiflow.devices import (
+    _parse_adb_devices,
+    _parse_simctl_all,
+    host_capabilities,
+    match_connected_device,
+)
 
 
 def test_parse_adb_devices():
@@ -9,6 +14,27 @@ def test_parse_adb_devices():
     assert out[0]["id"] == "emulator-5554"
     assert out[0]["kind"] == "emulator"
     assert out[1]["kind"] == "device"
+
+
+def test_match_connected_device_serial_and_avd_name():
+    connected = [
+        {
+            "id": "emulator-5554",
+            "platform": "android",
+            "name": "emulator-5554",
+            "kind": "emulator",
+        }
+    ]
+    assert match_connected_device("emulator-5554", connected)["id"] == "emulator-5554"
+    assert (
+        match_connected_device(
+            "Pixel_6",
+            connected,
+            avd_by_serial={"emulator-5554": "Pixel_6"},
+        )["id"]
+        == "emulator-5554"
+    )
+    assert match_connected_device("missing", connected) is None
 
 
 def test_parse_simctl_all():

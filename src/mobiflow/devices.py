@@ -122,6 +122,36 @@ async def _run_cmd(
     }
 
 
+def match_connected_device(
+    device_id: str,
+    connected: list[dict[str, str]],
+    *,
+    avd_by_serial: dict[str, str] | None = None,
+) -> dict[str, str] | None:
+    """Match adb serial, case-insensitive id, or running AVD name.
+
+    Android Studio shows AVD names (``Pixel_6``); ``adb devices`` shows
+    ``emulator-5554``. Config often has one while Maestro needs the other.
+    """
+    want = (device_id or "").strip()
+    if not want:
+        return None
+    want_l = want.lower().replace(" ", "_")
+    for d in connected:
+        did = str(d.get("id") or "")
+        name = str(d.get("name") or "")
+        if did == want or did.lower() == want.lower():
+            return d
+        if name.lower().replace(" ", "_") == want_l:
+            return d
+    for serial, avd_name in (avd_by_serial or {}).items():
+        if str(avd_name).strip().lower().replace(" ", "_") == want_l:
+            match = next((d for d in connected if d.get("id") == serial), None)
+            if match:
+                return match
+    return None
+
+
 def _parse_adb_devices(stdout: str) -> list[dict[str, str]]:
     devices: list[dict[str, str]] = []
     for line in (stdout or "").splitlines():
@@ -144,6 +174,29 @@ def _parse_adb_devices(stdout: str) -> list[dict[str, str]]:
                 }
             )
     return devices
+
+
+async def _online_avd_names() -> dict[str, str]:
+    """Map emulator serial → AVD name for running emulators."""
+    adb = resolve_adb()
+    if not adb:
+        return {}
+    out: dict[str, str] = {}
+    for d in await list_android_online():
+        serial = d.get("id") or ""
+        if not serial.startswith("emulator-"):
+            continue
+        r = await _run_cmd(
+            [adb, "-s", serial, "emu", "avd", "name"],
+            timeout=10.0,
+        )
+        text = (r.get("stdout") or "") + "\n" + (r.get("stderr") or "")
+        for line in text.splitlines():
+            line = line.strip()
+            if line and line.upper() != "OK" and not line.lower().startswith("error"):
+                out[serial] = line
+                break
+    return out
 
 
 async def list_android_online() -> list[dict[str, str]]:
@@ -516,10 +569,23 @@ async def ensure_device(
 
     # Explicit device already online?
     connected = await list_connected_devices()
+    avd_by_serial = await _online_avd_names() if plat == "android" else {}
     if device_id:
-        match = next((d for d in connected if d["id"] == device_id), None)
+        match = match_connected_device(
+            device_id, connected, avd_by_serial=avd_by_serial
+        )
         if match:
             return {"ok": True, "device": match, "started": False}
+        # Stale serial / AVD label in config while an emulator is already up.
+        android_online = [d for d in connected if d.get("platform") == "android"]
+        if plat == "android" and android_online:
+            pick = android_online[0]
+            _p(
+                f"Requested device {device_id!r} not in adb list "
+                f"(have {[d.get('id') for d in android_online]}); "
+                f"using {pick.get('id')}"
+            )
+            return {"ok": True, "device": pick, "started": False}
     else:
         for d in connected:
             if d.get("platform") == plat:

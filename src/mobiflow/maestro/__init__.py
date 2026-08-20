@@ -102,6 +102,24 @@ def _maestro_env() -> dict[str, str]:
     jh = resolve_java_home()
     if jh:
         env.setdefault("JAVA_HOME", jh)
+    # Maestro's JVM uses ANDROID_HOME to find adb. On Windows it is often unset
+    # even when `adb` works in PATH — then `--device emulator-5554` fails.
+    from mobiflow.devices import _sdk_roots, resolve_adb
+
+    sdk = env.get("ANDROID_HOME") or env.get("ANDROID_SDK_ROOT") or ""
+    if not sdk:
+        for root in _sdk_roots():
+            if (root / "platform-tools").is_dir():
+                sdk = str(root)
+                break
+    if sdk:
+        env.setdefault("ANDROID_HOME", sdk)
+        env.setdefault("ANDROID_SDK_ROOT", sdk)
+        plat = str(Path(sdk) / "platform-tools")
+        env["PATH"] = plat + os.pathsep + env.get("PATH", "")
+    adb = resolve_adb()
+    if adb:
+        env["PATH"] = str(Path(adb).parent) + os.pathsep + env.get("PATH", "")
     maestro_bin = resolve_maestro_binary()
     if maestro_bin:
         bin_dir = str(Path(maestro_bin).parent)

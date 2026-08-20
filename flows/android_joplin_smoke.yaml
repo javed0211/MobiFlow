@@ -2,13 +2,13 @@ appId: net.cozic.joplin
 ---
 - launchApp
 
-# Let React Native finish initial rendering
 - waitForAnimationToEnd
 - waitForAnimationToEnd
+
+# Give React Native a moment to render either onboarding or home UI
 - extendedWaitUntil:
-    visible:
-      text: "Skip|Later|Not now|Continue|Allow|Notes|All notes|Notebooks|New note|Welcome"
-    timeout: 12000
+    visible: "Skip|Later|Not now|Continue|Allow|Notes|All notes|Notebooks|New note|Welcome"
+    timeout: 10000
 
 # Optional first-run / setup / permission dismissals
 - tapOn:
@@ -31,9 +31,9 @@ appId: net.cozic.joplin
     text: "Allow"
     optional: true
 
-# Some screens may require more than one dismissal pass
 - waitForAnimationToEnd
 
+# Some dialogs can chain after the first dismissal
 - tapOn:
     text: "Skip"
     optional: true
@@ -56,34 +56,22 @@ appId: net.cozic.joplin
 
 - waitForAnimationToEnd
 
-# Verify home / welcome experience
-- extendedWaitUntil:
-    visible:
-      text: "Notes|All notes|Notebooks|New note|Welcome"
-    timeout: 15000
+# Confirm either the home notes UI or the built-in welcome experience
+- assertVisible: "Notes|All notes|Notebooks|New note|Welcome"
 
-- assertVisible:
-    text: "Notes|All notes|Notebooks|New note|Welcome"
-
-# Optional tap into New note if the control is clearly visible
+# Optional smoke interaction: open New note if present
 - tapOn:
     text: "New note"
     optional: true
 
 - waitForAnimationToEnd
 
-# If a note editor opened, back out once; if not, this is harmless on Android
+# If editor or another screen opened, return once
 - pressKey: back
 
 - waitForAnimationToEnd
 
-# Re-assert the main notes UI / welcome experience
-- extendedWaitUntil:
-    visible:
-      text: "Notes|All notes|Notebooks|New note|Welcome"
-    timeout: 10000
-
-- assertVisible:
-    text: "Notes|All notes|Notebooks|New note|Welcome"
+# Reconfirm the app is still on a valid home/welcome state
+- assertVisible: "Notes|All notes|Notebooks|New note|Welcome"
 
 - stopApp

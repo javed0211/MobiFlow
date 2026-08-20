@@ -3,9 +3,12 @@ appId: org.wikimedia.wikipedia
 - launchApp
 - waitForAnimationToEnd
 
-# Dismiss common first-launch, promo, and permission prompts if they appear
+# 1. Dismiss optional first-launch onboarding, login, review, and permission prompts
 - tapOn:
     text: "Skip"
+    optional: true
+- tapOn:
+    text: "Next"
     optional: true
 - tapOn:
     text: "Continue"
@@ -17,101 +20,94 @@ appId: org.wikimedia.wikipedia
     text: "Done"
     optional: true
 - tapOn:
-    text: "Close"
+    text: "Not now"
+    optional: true
+- tapOn:
+    text: "Continue without logging in"
+    optional: true
+- tapOn:
+    text: "Allow"
+    optional: true
+- waitForAnimationToEnd
+
+# Retry common blockers once more in case they appear after a transition
+- tapOn:
+    text: "Skip"
     optional: true
 - tapOn:
     text: "Not now"
     optional: true
 - tapOn:
-    text: "Maybe later"
+    text: "Continue without logging in"
     optional: true
 - tapOn:
-    text: "No thanks"
+    text: "Done"
     optional: true
-- tapOn:
-    text: "Allow"
-    optional: true
-- tapOn:
-    text: "OK"
-    optional: true
-- tapOn:
-    text: "Turn on"
-    optional: true
-- tapOn:
-    text: "Later"
-    optional: true
-
 - waitForAnimationToEnd
 
-# Ensure we are at a usable Explore/Search entry point
+# 2. Confirm the main Explore or Search experience is visible
+- extendedWaitUntil:
+    visible:
+      text: "Search Wikipedia|Search|Explore"
+    timeout: 20000
 - assertVisible:
-    text: "Search"
-    optional: true
-- assertVisible:
-    text: "Search Wikipedia"
-    optional: true
-- assertVisible:
-    text: "Explore"
-    optional: true
+    text: "Search Wikipedia|Search|Explore"
 
-# Open search
+# 3. Tap the Search field
 - tapOn:
-    text: "Search Wikipedia"
-    optional: true
-- tapOn:
-    text: "Search"
-    optional: true
-
+    text: "Search Wikipedia|Search"
 - waitForAnimationToEnd
 
-# Type and submit the query
-- inputText: "Albert Einstein"
+# 4. Type the query from test data
+- inputText: "${SEARCH_QUERY}"
+
+# 5. Submit the search and wait for results
 - pressKey: Enter
 - waitForAnimationToEnd
+- extendedWaitUntil:
+    visible:
+      text: "${ASSERT_TITLE}|${SEARCH_QUERY}"
+    timeout: 20000
 
-# Open the article result
+# 6. Open the first search result article
+# Prefer the expected article row when visible; this avoids re-tapping the search field.
 - tapOn:
-    text: "Albert Einstein"
-    index: 0
-
+    text: "${ASSERT_TITLE}|${SEARCH_QUERY}"
 - waitForAnimationToEnd
 
-# Evidence the Einstein article opened
+# 7. On the article page, wait for content to load, then scroll until a related section is visible
+- extendedWaitUntil:
+    visible:
+      text: "${ASSERT_TITLE}|${SEARCH_QUERY}|Contents|Read in another language"
+    timeout: 20000
+
+# First confirm article/title evidence before deeper scrolling
 - assertVisible:
-    text: "Albert Einstein"
+    text: "${ASSERT_TITLE}|${SEARCH_QUERY}"
 
-# Scroll to a likely section/header on the article without depending on "Early life"
+# Try to find a relevant section; optional so the flow does not fail if this article uses different headings
 - scrollUntilVisible:
     element:
-      text: "Life"
+      text: "${ARTICLE_HINT}|Early life|Scientific|Awards"
     direction: DOWN
-    timeout: 30000
+    timeout: 12000
+    speed: 40
     optional: true
 
-- scrollUntilVisible:
-    element:
-      text: "Biography"
-    direction: DOWN
-    timeout: 30000
-    optional: true
-
-- scrollUntilVisible:
-    element:
-      text: "Scientific career"
-    direction: DOWN
-    timeout: 30000
-    optional: true
-
-# Keep final evidence broad and reliable
+# 8. Assert that the article title or ASSERT_TITLE-related heading is visible
 - assertVisible:
-    text: "Albert Einstein"
+    text: "${ASSERT_TITLE}|${ARTICLE_HINT}|Early life|Scientific|Awards"
 
-# Optional navigate back if available
+# 9. Navigate back to search or Explore if a back control is available
 - tapOn:
     text: "Back"
     optional: true
 - tapOn:
     text: "Search"
     optional: true
+- tapOn:
+    text: "Explore"
+    optional: true
 
+# 10. End by closing the app
 - stopApp

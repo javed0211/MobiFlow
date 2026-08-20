@@ -1,7 +1,6 @@
 @smoke @joplin @foss
 appId: net.cozic.joplin
 platform: android
-device: emulator-5554
 codegen: true
 explore: true
 exploreSteps: 4
