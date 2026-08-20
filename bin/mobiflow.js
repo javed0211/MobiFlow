@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /**
  * npm bin wrapper for the Python MobiFlow CLI.
- * Resolves: PATH mobiflow → python -m mobiflow → pip install → retry.
+ * Ensures the Python package matches this package.json version, then runs
+ * ``python -m mobiflow``.
  *
  * Windows note: never run ``python -c "…"`` through ``cmd.exe`` (shell:true) —
  * quoting breaks and a real 3.12 install looks like “no Python 3.11+”.
@@ -9,8 +10,6 @@
 "use strict";
 
 const { spawnSync } = require("child_process");
-const fs = require("fs");
-const path = require("path");
 
 const PKG = require("../package.json");
 const VERSION = PKG.version || "0.1.0";
@@ -145,6 +144,19 @@ function moduleAvailable(py) {
   return r.status === 0;
 }
 
+/** Installed Python package version, or null if missing / unreadable. */
+function installedVersion(py) {
+  const code =
+    "from importlib.metadata import version\n" +
+    "print(version('mobiflow'))";
+  const r = run(py, ["-c", code], {
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  if (r.status !== 0 || !r.stdout) return null;
+  const ver = r.stdout.toString().trim().split(/\r?\n/).pop() || "";
+  return ver || null;
+}
+
 function pipInstall(py, spec) {
   console.error(`[mobiflow] Installing Python package: ${spec}`);
   const r = run(py, ["-m", "pip", "install", "--upgrade", spec], {
@@ -154,26 +166,34 @@ function pipInstall(py, spec) {
 }
 
 function ensureMobiflow(py) {
-  if (moduleAvailable(py)) return true;
+  const current = installedVersion(py);
+  if (current === VERSION) return true;
+  if (current) {
+    console.error(
+      `[mobiflow] Python package is ${current}; need ${VERSION} — upgrading…`
+    );
+  }
 
+  // Prefer git tags: the npm wrapper version tracks the GitHub release.
+  // PyPI may lag or be empty for early releases.
   const specs = [
     process.env.MOBIFLOW_PIP_SPEC,
+    `git+${REPO}@v${VERSION}`,
     `mobiflow==${VERSION}`,
     "mobiflow",
-    `git+${REPO}@v${VERSION}`,
     `git+${REPO}@main`,
   ].filter(Boolean);
 
   for (const spec of specs) {
-    if (pipInstall(py, spec) && moduleAvailable(py)) return true;
+    if (!pipInstall(py, spec)) continue;
+    const got = installedVersion(py);
+    if (got === VERSION) return true;
+    if (moduleAvailable(py) && (spec.includes("@main") || process.env.MOBIFLOW_PIP_SPEC)) {
+      return true;
+    }
   }
-  return false;
-}
-
-function pathLookup(binName) {
-  // Use where.exe explicitly — ``where`` with shell can behave oddly.
-  const cmd = IS_WIN ? "where.exe" : "which";
-  return run(cmd, [binName], { stdio: ["ignore", "pipe", "ignore"] });
+  // Last resort: whatever is importable (may be older — caller still runs).
+  return moduleAvailable(py);
 }
 
 function main(argv) {
@@ -193,46 +213,14 @@ function main(argv) {
     process.exit(1);
   }
 
-  // Prefer an already-installed console script on PATH (avoid recursion).
-  const self = path.resolve(__filename);
-  const onPath = pathLookup("mobiflow");
-  if (onPath.status === 0 && onPath.stdout) {
-    const candidates = onPath.stdout
-      .toString()
-      .split(/\r?\n/)
-      .map((s) => s.trim())
-      .filter(Boolean);
-    for (const bin of candidates) {
-      let resolved = bin;
-      try {
-        resolved = fs.realpathSync(bin);
-      } catch {
-        /* ignore */
-      }
-      if (resolved === self) continue;
-      if (resolved.includes(`${path.sep}node_modules${path.sep}`)) continue;
-      if (resolved.includes(`${path.sep}@qubiqlabs${path.sep}mobiflow${path.sep}`)) {
-        continue;
-      }
-      if (resolved.includes(`${path.sep}mobiflow${path.sep}bin${path.sep}`)) {
-        continue;
-      }
-      // Console scripts on Windows are often .cmd — shell helps those only.
-      const r = spawnSync(bin, argv, {
-        stdio: "inherit",
-        windowsHide: true,
-        env: process.env,
-        shell: IS_WIN && /\.(cmd|bat)$/i.test(bin),
-      });
-      process.exit(r.status ?? 1);
-    }
-  }
-
+  // Always ensure the Python package matches this npm wrapper version first.
+  // Do not hand off to a stale console script on PATH (that hid new commands
+  // like ``apps`` after npm upgrades).
   if (!ensureMobiflow(py)) {
     console.error(
       "[mobiflow] Could not install the Python package.\n" +
-        `  Try: "${py}" -m pip install "git+${REPO}@main"\n` +
-        `  Or:  "${py}" -m pip install mobiflow`
+        `  Try: "${py}" -m pip install "git+${REPO}@v${VERSION}"\n` +
+        `  Or:  "${py}" -m pip install "git+${REPO}@main"`
     );
     process.exit(1);
   }
