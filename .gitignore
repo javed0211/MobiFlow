@@ -6,11 +6,10 @@ __pycache__/
 *.egg-info/
 dist/
 build/
-# Sample APKs: only wikipedia.apk is vendored (Git LFS). Other builds stay local.
-builds/*
-!builds/wikipedia.apk
+# Sample APKs: downloaded on-demand from official sources (Wikimedia, GitHub).
+# Never commit APK/IPA binaries to git.
+builds/
 *.apk
-!builds/wikipedia.apk
 *.ipa
 .mobiflow/
 mobiflow.config.yaml
