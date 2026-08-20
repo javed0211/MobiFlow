@@ -166,6 +166,7 @@ FOSS sample apps (Joplin, Bitwarden, Wikipedia): [docs/SAMPLE_APPS.md](docs/SAMP
 |---------|----------|
 | `mobiflow init` | Wizard / non-interactive scaffold (+ optional deps install) |
 | `mobiflow setup` | Detect / auto-install missing Maestro, JDK, pip packages |
+| `mobiflow apps list` / `apps install wikipedia` | Download FOSS sample APKs + install on connected device |
 | `mobiflow run <case.txt>` | Explore → LLM YAML → device (+ heal) |
 | `mobiflow run cases/ [--tag smoke]` | Suite: all (or tagged) cases + aggregate JUnit/HTML |
 | `mobiflow suite [cases/]` | Same as `run` on a directory (defaults to `cases/`) |

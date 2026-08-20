@@ -172,6 +172,98 @@ def setup_cmd(repo: str | None, install_adb: bool, check_only: bool) -> None:
     console.print("\n[green]Required dependencies look good.[/green]")
 
 
+@main.group("apps")
+def apps_group() -> None:
+    """Download / install FOSS sample apps (Wikipedia, Joplin)."""
+
+
+@apps_group.command("list")
+def apps_list() -> None:
+    """Show sample apps that can be downloaded/installed."""
+    from mobiflow.sample_apps import list_sample_apps
+
+    console.print("[bold]Sample FOSS apps[/bold] (APKs download on demand — not shipped)\n")
+    for app in list_sample_apps():
+        console.print(f"  [cyan]{app.name}[/cyan]  {app.label}")
+        console.print(f"       android={app.app_id_android}  ios={app.app_id_ios}")
+        console.print(f"       [dim]{app.notes}[/dim]")
+    console.print(
+        "\n[dim]Install: mobiflow apps install wikipedia[/dim]\n"
+        "[dim]Binaries land in ./builds/ (gitignored).[/dim]"
+    )
+
+
+@apps_group.command("install")
+@click.argument("name")
+@click.option("--repo", default=None, help="Project path (builds/ lives here)")
+@click.option("--platform", default="android", show_default=True, help="android|ios")
+@click.option("--device", "device_id", default=None, help="adb serial / UDID")
+@click.option("--apk", "apk_path", default=None, type=click.Path(exists=True), help="Local APK override")
+@click.option("--app", "app_bundle", default=None, type=click.Path(exists=True), help="iOS .app bundle path")
+@click.option("--download-only", is_flag=True, help="Download APK only; skip adb install")
+@click.option("--force", is_flag=True, help="Re-download even if builds/<name>.apk exists")
+def apps_install(
+    name: str,
+    repo: str | None,
+    platform: str,
+    device_id: str | None,
+    apk_path: str | None,
+    app_bundle: str | None,
+    download_only: bool,
+    force: bool,
+) -> None:
+    """Download (Android) and install a sample app on the connected device.
+
+    Examples:
+      mobiflow apps install wikipedia
+      mobiflow apps install joplin --device emulator-5554
+      mobiflow apps install wikipedia --download-only
+    """
+    import asyncio
+
+    from mobiflow.sample_apps import default_builds_dir, install_sample_app
+
+    root = Path(repo).expanduser().resolve() if repo else Path.cwd()
+    dest = default_builds_dir(root)
+
+    def progress(msg: str) -> None:
+        console.print(f"  [dim]→[/dim] {msg}")
+
+    try:
+        result = asyncio.run(
+            install_sample_app(
+                name,
+                platform=platform,
+                device_id=device_id,
+                apk_path=apk_path,
+                app_path=app_bundle,
+                dest_dir=dest,
+                download_only=download_only,
+                force_download=force,
+                progress=progress,
+            )
+        )
+    except ValueError as e:
+        console.print(f"[red]{e}[/red]")
+        sys.exit(2)
+    except RuntimeError as e:
+        console.print(f"[red]{e}[/red]")
+        sys.exit(1)
+
+    if result.get("ok"):
+        console.print(f"[bold green]OK[/bold green] {result.get('message')}")
+        if result.get("app_id"):
+            console.print(f"  appId={result['app_id']}")
+        if result.get("apk_path"):
+            console.print(f"  apk={result['apk_path']}")
+        return
+
+    console.print(
+        f"[bold red]FAIL[/bold red] {result.get('message') or result.get('error')}"
+    )
+    sys.exit(1)
+
+
 @main.group("config")
 def config_group() -> None:
     """Show / inspect configuration."""
