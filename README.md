@@ -21,15 +21,9 @@ curl -Ls "https://get.maestro.mobile.dev" | bash
 
 ## Install
 
-**Python (recommended):**
-
-```bash
-pip install mobiflow
-# or from source
-pip install -e ".[dev]"
-```
-
-**npm wrapper** (launches the Python CLI; requires Python 3.11+):
+**npm** (ships the engine; no git). You still need **Python 3.11+** on PATH.
+The launcher creates `~/.mobiflow/venv` and pip-installs the bundled package
+there (it does not clone GitHub or write into Homebrew/system Python):
 
 ```bash
 npm install -g @qubiqlabs/mobiflow
@@ -37,7 +31,7 @@ npm install -g @qubiqlabs/mobiflow
 npx @qubiqlabs/mobiflow --help
 ```
 
-On Windows, the wrapper prefers `py -3.12` / `py -3` (not the Microsoft Store
+On Windows, the launcher prefers `py -3.12` / `py -3` (not the Microsoft Store
 `python` stub). If detection still fails:
 
 ```bat
@@ -45,7 +39,11 @@ set MOBIFLOW_PYTHON=C:\Path\To\Python312\python.exe
 mobiflow init
 ```
 
-Or skip npm and run: `py -3.12 -m pip install mobiflow` then `py -3.12 -m mobiflow init`.
+**From this repo** (contributors):
+
+```bash
+pip install -e ".[dev]"
+```
 
 See [docs/PUBLISH.md](docs/PUBLISH.md) for maintainers.
 

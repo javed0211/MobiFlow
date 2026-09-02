@@ -1,8 +1,7 @@
 #!/usr/bin/env node
 /**
- * npm bin wrapper for the Python MobiFlow CLI.
- * Ensures the Python package matches this package.json version, then runs
- * ``python -m mobiflow``.
+ * npm launcher for the MobiFlow engine (Python), which is shipped inside
+ * this package (pyproject.toml + src/mobiflow). No git clone.
  *
  * Windows note: never run ``python -c "…"`` through ``cmd.exe`` (shell:true) —
  * quoting breaks and a real 3.12 install looks like “no Python 3.11+”.
@@ -10,10 +9,13 @@
 "use strict";
 
 const { spawnSync } = require("child_process");
+const fs = require("fs");
+const os = require("os");
+const path = require("path");
 
 const PKG = require("../package.json");
 const VERSION = PKG.version || "0.1.0";
-const REPO = "https://github.com/javed0211/MobiFlow.git";
+const ROOT = path.resolve(__dirname, "..");
 const IS_WIN = process.platform === "win32";
 
 /** @typedef {{ cmd: string, prefixArgs?: string[], label?: string }} PyCandidate */
@@ -157,8 +159,40 @@ function installedVersion(py) {
   return ver || null;
 }
 
+function bundledRoot() {
+  const pyproject = path.join(ROOT, "pyproject.toml");
+  const pkgDir = path.join(ROOT, "src", "mobiflow");
+  if (fs.existsSync(pyproject) && fs.existsSync(pkgDir)) return ROOT;
+  return null;
+}
+
+function venvDir() {
+  return process.env.MOBIFLOW_VENV || path.join(os.homedir(), ".mobiflow", "venv");
+}
+
+function venvPythonPath() {
+  const dir = venvDir();
+  return IS_WIN
+    ? path.join(dir, "Scripts", "python.exe")
+    : path.join(dir, "bin", "python");
+}
+
+/** Create ~/.mobiflow/venv with the discovered system Python (PEP 668 safe). */
+function ensureVenv(systemPy) {
+  const exe = venvPythonPath();
+  if (fs.existsSync(exe)) {
+    const ver = pythonVersion({ cmd: exe });
+    if (ver && ver.major >= 3 && ver.minor >= 11) return exe;
+  }
+  console.error(`[mobiflow] Creating engine venv at ${venvDir()}`);
+  fs.mkdirSync(path.dirname(venvDir()), { recursive: true });
+  const r = run(systemPy, ["-m", "venv", venvDir()], { stdio: "inherit" });
+  if (r.status !== 0 || !fs.existsSync(exe)) return null;
+  return exe;
+}
+
 function pipInstall(py, spec) {
-  console.error(`[mobiflow] Installing Python package: ${spec}`);
+  console.error(`[mobiflow] Installing engine from ${spec}`);
   const r = run(py, ["-m", "pip", "install", "--upgrade", spec], {
     stdio: "inherit",
   });
@@ -170,42 +204,48 @@ function ensureMobiflow(py) {
   if (current === VERSION) return true;
   if (current) {
     console.error(
-      `[mobiflow] Python package is ${current}; need ${VERSION} — upgrading…`
+      `[mobiflow] Engine is ${current}; need ${VERSION} — installing from this package…`
     );
+  } else {
+    console.error("[mobiflow] Installing engine from this npm package…");
   }
 
-  // Prefer git tags: the npm wrapper version tracks the GitHub release.
-  // PyPI may lag or be empty for early releases.
-  const specs = [
-    process.env.MOBIFLOW_PIP_SPEC,
-    `git+${REPO}@v${VERSION}`,
-    `mobiflow==${VERSION}`,
-    "mobiflow",
-    `git+${REPO}@main`,
-  ].filter(Boolean);
+  const specs = [];
+  if (process.env.MOBIFLOW_PIP_SPEC) {
+    specs.push(process.env.MOBIFLOW_PIP_SPEC);
+  }
+  const bundled = bundledRoot();
+  if (bundled) specs.push(bundled);
+
+  if (!specs.length) {
+    console.error(
+      "[mobiflow] This npm package is missing pyproject.toml / src/mobiflow.\n" +
+        "  Reinstall: npm install -g @qubiqlabs/mobiflow"
+    );
+    return false;
+  }
 
   for (const spec of specs) {
     if (!pipInstall(py, spec)) continue;
     const got = installedVersion(py);
     if (got === VERSION) return true;
-    if (moduleAvailable(py) && (spec.includes("@main") || process.env.MOBIFLOW_PIP_SPEC)) {
+    if (moduleAvailable(py) && process.env.MOBIFLOW_PIP_SPEC && spec === process.env.MOBIFLOW_PIP_SPEC) {
       return true;
     }
   }
-  // Last resort: whatever is importable (may be older — caller still runs).
   return moduleAvailable(py);
 }
 
 function main(argv) {
-  const py = whichPython();
-  if (!py) {
+  const systemPy = whichPython();
+  if (!systemPy) {
     const tried = whichPython._tried || [];
     console.error(
-      "[mobiflow] Python 3.11+ is required on PATH.\n" +
+      "[mobiflow] Python 3.11+ is required on PATH (the npm package ships the engine;\n" +
+        "  it does not replace Python).\n" +
         "  https://www.python.org/downloads/\n" +
         "  Or set MOBIFLOW_PYTHON to your python.exe, e.g.\n" +
-        '    set MOBIFLOW_PYTHON=C:\\Users\\You\\AppData\\Local\\Programs\\Python\\Python312\\python.exe\n' +
-        "  Or: py -3.12 -m pip install mobiflow && py -3.12 -m mobiflow --help"
+        "    set MOBIFLOW_PYTHON=C:\\Users\\You\\AppData\\Local\\Programs\\Python\\Python312\\python.exe"
     );
     if (tried.length) {
       console.error("  Tried: " + tried.join("; "));
@@ -213,14 +253,19 @@ function main(argv) {
     process.exit(1);
   }
 
-  // Always ensure the Python package matches this npm wrapper version first.
-  // Do not hand off to a stale console script on PATH (that hid new commands
-  // like ``apps`` after npm upgrades).
+  const py = ensureVenv(systemPy);
+  if (!py) {
+    console.error(
+      `[mobiflow] Could not create a venv with "${systemPy}".\n` +
+        `  Try: "${systemPy}" -m venv "${venvDir()}"`
+    );
+    process.exit(1);
+  }
+
   if (!ensureMobiflow(py)) {
     console.error(
-      "[mobiflow] Could not install the Python package.\n" +
-        `  Try: "${py}" -m pip install "git+${REPO}@v${VERSION}"\n` +
-        `  Or:  "${py}" -m pip install "git+${REPO}@main"`
+      "[mobiflow] Could not install the engine from this npm package.\n" +
+        `  Try: "${py}" -m pip install --upgrade "${ROOT}"`
     );
     process.exit(1);
   }

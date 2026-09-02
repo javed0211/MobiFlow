@@ -1,7 +1,8 @@
 # Publishing MobiFlow
 
-MobiFlow’s **engine is Python** (`pip install mobiflow`).  
-The **npm package** is a thin Node launcher so users can run `npx @qubiqlabs/mobiflow` / `npm i -g @qubiqlabs/mobiflow`.
+The **npm package** (`@qubiqlabs/mobiflow`) is the user-facing install. It ships
+`pyproject.toml` + `src/mobiflow` and the Node launcher installs that tree with
+pip (Python 3.11+ on PATH; **no git clone**).
 
 Scoped package name: **`@qubiqlabs/mobiflow`** (publishes under the `qubiqlabs` org/user).
 
@@ -78,14 +79,16 @@ mobiflow --help
 
 The npm bin (`bin/mobiflow.js`) will:
 
-1. Prefer an existing `mobiflow` on `PATH`
-2. Else `python3 -m mobiflow`
-3. Else `pip install mobiflow==<npm version>` (falls back to GitHub tag `v<version>`)
+1. Find Python 3.11+ on PATH
+2. Create `~/.mobiflow/venv` if needed, then `pip install` the engine from
+   **this npm package directory** when the installed version does not match
+   `package.json`
+3. Run `python -m mobiflow …`
 
-Override install source:
+Override the pip spec (optional, for contributors):
 
 ```bash
-export MOBIFLOW_PIP_SPEC='git+https://github.com/javed0211/MobiFlow.git@main'
+export MOBIFLOW_PIP_SPEC='/path/to/MobiFlow'
 npx @qubiqlabs/mobiflow status
 ```
 
@@ -107,7 +110,7 @@ Create a GitHub Release from that tag for release notes.
 - [ ] Tests green: `pytest`
 - [ ] Version bumped in `pyproject.toml` + `package.json`
 - [ ] `LICENSE` present
-- [ ] PyPI upload succeeded (or GitHub fallback is acceptable for first npm cut)
+- [ ] `npm pack --dry-run` includes `bin/`, `src/mobiflow/`, `pyproject.toml`
 - [ ] `npm whoami` works
 - [ ] `npm publish --access public`
 - [ ] Tag `v0.1.0` pushed

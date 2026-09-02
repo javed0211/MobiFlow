@@ -1,7 +1,7 @@
 {
   "name": "@qubiqlabs/mobiflow",
   "version": "0.9.1",
-  "description": "CLI: NL \u2192 Maestro mobile flows via LLM, run on device/emulator, self-heal. (npm wrapper for the Python package)",
+  "description": "CLI: NL \u2192 Maestro mobile flows via LLM, run on device/emulator, self-heal.",
   "license": "Apache-2.0",
   "author": "QubiQ Labs <labs@qubiq.ai>",
   "homepage": "https://github.com/javed0211/MobiFlow",
@@ -28,6 +28,11 @@
   },
   "files": [
     "bin/",
+    "src/mobiflow/**/*.py",
+    "src/mobiflow/**/*.html",
+    "src/mobiflow/**/*.svg",
+    "src/mobiflow/**/*.jpg",
+    "pyproject.toml",
     "README.md",
     "LICENSE"
   ],
@@ -36,7 +41,7 @@
   },
   "scripts": {
     "mobiflow": "node bin/mobiflow.js",
-    "prepack": "node -e \"require('fs').accessSync('bin/mobiflow.js')\""
+    "prepack": "node -e \"const fs=require('fs'); ['bin/mobiflow.js','pyproject.toml','src/mobiflow/cli.py'].forEach(p=>fs.accessSync(p))\""
   },
   "publishConfig": {
     "access": "public"
