@@ -36,6 +36,41 @@ appId: com.android.settings
 - stopApp
 ```
 
+## E2E API calls and hooks (Maestro)
+
+Maestro can call APIs **during** a flow and in **before/after** hooks. There is no YAML `http:` command — HTTP uses GraalJS `http.get/post/put/delete` plus `json()`, usually from `runScript`. Hooks are Maestro-native:
+
+| Hook | When |
+|------|------|
+| `onFlowStart` | Before the main UI steps (setup / seed) |
+| `onFlowComplete` | After the flow, pass or fail (teardown) |
+
+If the case/task mentions an API (`POST https://…`, “call the API”, GraphQL, etc.), codegen enables JS and emits `http.*` + hooks.
+
+Declare hooks on the case (optional — the agent also infers them from the task):
+
+```text
+onFlowStart:
+  - POST ${API_BASE}/test-users {"email":"${USER_EMAIL}"}
+onFlowComplete:
+  - DELETE ${API_BASE}/test-users/${output.userId}
+
+task: |
+  After the API creates a user, launch the app, sign in as that user,
+  and confirm the home screen. Then the after-hook deletes the user.
+```
+
+`before:` / `after:` are aliases for `onFlowStart` / `onFlowComplete`. Env values (`API_BASE`, tokens) go in `env:` or `data:` — never in git.
+
+Runnable sample (public ReqRes API + [WebdriverIO Native Demo](https://github.com/webdriverio/native-demo-app/releases)):
+
+```bash
+mobiflow apps install wdio
+mobiflow run cases/android_e2e_api_hooks.txt
+```
+
+Frozen flow: `flows/android_e2e_api_hooks.yaml` with `flows/scripts/e2e_seed.js` and `e2e_teardown.js`.
+
 ## Devices & auto-start (macOS + Windows)
 
 MobiFlow discovers **online** devices and **startable** targets:
@@ -95,8 +130,20 @@ export BROWSERSTACK_ACCESS_KEY=...
 # or: MAESTRO_CLOUD_API_KEY=...
 
 mobiflow status                 # shows cloud readiness
-mobiflow run cases/example.txt  # uploads + executes on the cloud device
+mobiflow apps install browserstack --download-only
+mobiflow run cases/android_browserstack_smoke.txt
+mobiflow apps install testmu --download-only
+mobiflow run cases/android_testmu_smoke.txt
 mobiflow test-flow flows/foo.yaml
+```
+
+The BrowserStack / TestMu sample cases set `provider:` and `appPath:` on the
+case file (CLI `--device` still wins for the device name). They are tagged
+`@cloud` so a local smoke suite can skip them:
+
+```bash
+mobiflow run cases/ --tag smoke          # local samples
+mobiflow run cases/ --tag cloud          # BrowserStack + TestMu
 ```
 
 Notes:
@@ -104,6 +151,7 @@ Notes:
 - Adaptive hierarchy heal is **local-only**; cloud heal uses failure logs.
 - TestMu auto-downloads the HyperExecute CLI to `~/.mobiflow/bin` on first run.
 - Maestro Cloud runs via `maestro cloud` with your API key.
+- `mobiflow init` copies every starter case under `cases/` (plus matching `flows/` and `data/`).
 - `mobiflow init` step 3 lets you pick Local / Maestro Cloud / BrowserStack / TestMu and set device + app path.
 
 ## Dual LLM roles
@@ -240,7 +288,7 @@ block for explore/codegen. `DATA_PATH` is always set to the resolved absolute pa
 
 ### Case template & per-case run options
 
-Copy `cases/example.txt` (or the template from `mobiflow init`). Precedence for run
+Copy `cases/example.txt` (or any starter from `mobiflow init`). Precedence for run
 knobs is **CLI → case file → `mobiflow.config.yaml`**.
 
 | Case key | Meaning |

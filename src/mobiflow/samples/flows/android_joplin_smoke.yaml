@@ -1,0 +1,77 @@
+appId: net.cozic.joplin
+---
+- launchApp
+
+- waitForAnimationToEnd
+- waitForAnimationToEnd
+
+# Give React Native a moment to render either onboarding or home UI
+- extendedWaitUntil:
+    visible: "Skip|Later|Not now|Continue|Allow|Notes|All notes|Notebooks|New note|Welcome"
+    timeout: 10000
+
+# Optional first-run / setup / permission dismissals
+- tapOn:
+    text: "Skip"
+    optional: true
+
+- tapOn:
+    text: "Later"
+    optional: true
+
+- tapOn:
+    text: "Not now"
+    optional: true
+
+- tapOn:
+    text: "Continue"
+    optional: true
+
+- tapOn:
+    text: "Allow"
+    optional: true
+
+- waitForAnimationToEnd
+
+# Some dialogs can chain after the first dismissal
+- tapOn:
+    text: "Skip"
+    optional: true
+
+- tapOn:
+    text: "Later"
+    optional: true
+
+- tapOn:
+    text: "Not now"
+    optional: true
+
+- tapOn:
+    text: "Continue"
+    optional: true
+
+- tapOn:
+    text: "Allow"
+    optional: true
+
+- waitForAnimationToEnd
+
+# Confirm either the home notes UI or the built-in welcome experience
+- assertVisible: "Notes|All notes|Notebooks|New note|Welcome"
+
+# Optional smoke interaction: open New note if present
+- tapOn:
+    text: "New note"
+    optional: true
+
+- waitForAnimationToEnd
+
+# If editor or another screen opened, return once
+- pressKey: back
+
+- waitForAnimationToEnd
+
+# Reconfirm the app is still on a valid home/welcome state
+- assertVisible: "Notes|All notes|Notebooks|New note|Welcome"
+
+- stopApp

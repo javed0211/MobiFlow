@@ -32,6 +32,13 @@
     "src/mobiflow/**/*.html",
     "src/mobiflow/**/*.svg",
     "src/mobiflow/**/*.jpg",
+    "src/mobiflow/**/*.txt",
+    "src/mobiflow/**/*.yaml",
+    "src/mobiflow/**/*.yml",
+    "src/mobiflow/**/*.js",
+    "src/mobiflow/**/*.json",
+    "src/mobiflow/**/*.md",
+    "src/mobiflow/**/*.example",
     "pyproject.toml",
     "README.md",
     "LICENSE"

@@ -1,0 +1,6 @@
+appId: com.apple.Preferences
+name: iOS Settings smoke
+---
+- launchApp
+- assertVisible: ".*Settings.*|General|Wi-Fi|Bluetooth|Display"
+- stopApp

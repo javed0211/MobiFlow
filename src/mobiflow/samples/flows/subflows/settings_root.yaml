@@ -1,0 +1,13 @@
+# Subflow: return to Settings root (best-effort).
+appId: com.apple.Preferences
+---
+- tapOn:
+    text: "Settings"
+    optional: true
+- tapOn:
+    id: "Settings"
+    optional: true
+- swipe:
+    direction: DOWN
+    duration: 200
+- assertVisible: "General|Wi-Fi|Bluetooth|Display|Accessibility|.*Settings.*"

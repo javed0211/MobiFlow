@@ -1,0 +1,39 @@
+# Cloud sample: BrowserStack App Automate (Maestro) + Wikipedia sample APK.
+#
+#   export BROWSERSTACK_USERNAME=... BROWSERSTACK_ACCESS_KEY=...
+#   mobiflow apps install browserstack --download-only
+#   mobiflow run cases/android_browserstack_smoke.txt
+#
+# Frozen YAML: flows/android_browserstack_smoke.yaml
+# This case sets provider/appPath so it runs on BrowserStack even if
+# mobiflow.config.yaml still says local. Omit those keys to run locally
+# after `mobiflow apps install browserstack`.
+
+@cloud @browserstack
+appId: org.wikipedia
+platform: android
+provider: browserstack
+device: Google Pixel 7-13.0
+appPath: builds/browserstack.apk
+codegen: false
+flow: flows/android_browserstack_smoke.yaml
+explore: false
+heal: 0
+retries: 0
+timeout: 600
+
+env:
+  SEARCH_QUERY = Ada Lovelace
+
+expect:
+  - Search
+
+task: |
+  On BrowserStack App Automate, launch the Wikipedia sample app, dismiss
+  onboarding if shown, confirm Search, and type ${SEARCH_QUERY}.
+
+  1. Launch Wikipedia
+  2. Dismiss Skip / Continue / Got it / Dismiss sheets (optional)
+  3. Confirm Search is visible
+  4. Tap Search and type ${SEARCH_QUERY}
+  5. Confirm Search remains visible

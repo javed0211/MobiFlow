@@ -1,0 +1,23 @@
+@smoke @codegen
+appId: com.apple.Preferences
+platform: ios
+codegen: true
+explore: true
+exploreSteps: 3
+heal: 1
+retries: 0
+timeout: 240
+
+expect:
+  - General
+
+task: |
+  Open the iOS Settings app and verify core navigation works.
+
+  1. Launch Settings
+  2. Dismiss any permission / Allow dialogs if shown
+  3. Confirm General (or Accessibility / Apple Account) is visible
+  4. Tap General
+  5. Confirm About or Software Update is visible
+  6. Go back to Settings
+  7. Confirm General is visible again

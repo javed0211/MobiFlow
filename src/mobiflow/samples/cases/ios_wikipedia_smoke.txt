@@ -1,0 +1,26 @@
+@smoke @wikipedia
+appId: org.wikimedia.wikipedia
+platform: ios
+device: 8B9754B2-AD59-476F-924E-E243FAA609EB
+codegen: true
+explore: true
+exploreSteps: 3
+heal: 1
+retries: 0
+timeout: 240
+
+expect:
+  - Search|Explore|Wikipedia
+
+task: |
+  Open the Wikipedia iOS app and verify the home / search experience.
+
+  1. Launch Wikipedia
+  2. Dismiss any onboarding, Year in Review, login, notification, or
+     Skip / Next / Continue / Not now / Done sheets (all optional)
+  3. Confirm Explore or Search (or Wikipedia branding) is visible on the main screen
+  4. If a Search field or Search tab is visible, tap it once
+  5. Assert Search|Explore|Wikipedia is visible
+  6. stopApp
+
+  Prefer stable visible text. Do not invent maestro.visible(). No Playwright/Appium.

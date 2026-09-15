@@ -1,0 +1,47 @@
+# E2E sample: API hooks + WebdriverIO Native Demo UI.
+# App: https://github.com/webdriverio/native-demo-app/releases
+#
+#   mobiflow apps install wdio
+#   mobiflow run cases/android_e2e_api_hooks.txt
+#
+# Frozen YAML: flows/android_e2e_api_hooks.yaml
+# Set codegen: true if you want the agent to regenerate from the task.
+
+@e2e @api @wdio
+appId: com.wdiodemoapp
+platform: android
+codegen: false
+flow: flows/android_e2e_api_hooks.yaml
+explore: false
+heal: 0
+retries: 0
+timeout: 240
+
+env:
+  API_BASE = https://reqres.in
+  USER_NAME = MobiFlow E2E
+  LOGIN_EMAIL = bob@example.com
+  LOGIN_PASSWORD = s3cret
+
+onFlowStart:
+  - runScript: scripts/e2e_seed.js
+onFlowComplete:
+  - runScript: scripts/e2e_teardown.js
+
+expect:
+  - Login|Forms|Home|Webview
+
+task: |
+  Before the UI: POST ${API_BASE}/api/users to create a test user (name=${USER_NAME})
+  and store output.userId. Then launch the WebdriverIO Native Demo app
+  (com.wdiodemoapp), open Login, sign in with ${LOGIN_EMAIL} / ${LOGIN_PASSWORD}
+  (the app's built-in demo credentials), and confirm a success state
+  (Success|Secret Area|You are logged in|Logout). After the flow (pass or fail):
+  DELETE ${API_BASE}/api/users/${output.userId}.
+
+  1. onFlowStart — create user via API
+  2. Launch WebdriverIO Native Demo
+  3. Tap Login
+  4. Enter ${LOGIN_EMAIL} and ${LOGIN_PASSWORD}
+  5. Tap LOGIN and confirm success
+  6. onFlowComplete — delete the test user via API

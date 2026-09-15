@@ -1,7 +1,7 @@
 # Authoring MobiFlow cases
 
 Cases are plain-text `.txt` files under `cases/`. One file = one scenario.
-Copy `cases/example.txt` (also written by `mobiflow init`) and edit.
+Copy `cases/example.txt` (or any other starter `mobiflow init` writes under `cases/`) and edit.
 
 ## Minimal case
 
@@ -15,6 +15,13 @@ task: Open Wikipedia and confirm Search is visible
 FOSS targets beyond Wikipedia (Joplin, Bitwarden — install notes + `appId`s):
 **[SAMPLE_APPS.md](SAMPLE_APPS.md)**. Starter cases: `cases/android_joplin_smoke.txt`,
 `cases/android_bitwarden_smoke.txt`.
+
+E2E API + before/after hooks (ReqRes fake API + [WebdriverIO Native Demo](https://github.com/webdriverio/native-demo-app/releases)):
+`cases/android_e2e_api_hooks.txt` — install with `mobiflow apps install wdio`. See **[FEATURES.md](FEATURES.md#e2e-api-calls-and-hooks-maestro)**.
+
+Cloud labs (self-contained; credentials via env):
+`cases/android_browserstack_smoke.txt`, `cases/android_testmu_smoke.txt` —
+see **[FEATURES.md](FEATURES.md#cloud-device-labs-browserstack--testmu--maestro-cloud)**.
 
 ## Full template
 
@@ -61,7 +68,11 @@ task: |
 |-----|----------|--------|
 | `appId` | recommended | Maestro package / bundle id |
 | `platform` | recommended | `android` or `ios` |
-| `device` | no | Device id / UDID / AVD name |
+| `device` | no | Device id / UDID / AVD name / cloud device name |
+| `provider` | no | `local` \| `browserstack` \| `testmu` \| `maestro` (overrides config) |
+| `appPath` | no | `.apk` / `.ipa` to upload (cloud) |
+| `appUrl` | no | Already-uploaded `bs://…` or `lt://…` |
+| `realMobile` | no | TestMu: real device vs virtual emulator |
 | `task` / `goal` | **yes*** | NL intent (`*` or numbered steps) |
 | `flow` | no | Frozen YAML path (implies reuse when present) |
 | `clearState` | no | Clear app before run |

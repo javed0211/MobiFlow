@@ -52,7 +52,7 @@ packages = ["src/mobiflow"]
 "src/mobiflow" = "mobiflow"
 
 [tool.hatch.build.targets.sdist]
-include = ["src/mobiflow", "docs", "README.md", "pyproject.toml", "cases", "flows"]
+include = ["src/mobiflow", "docs", "README.md", "pyproject.toml", "cases", "flows", "data"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -1,0 +1,113 @@
+appId: org.wikimedia.wikipedia
+---
+- launchApp
+- waitForAnimationToEnd
+
+# 1. Dismiss optional first-launch onboarding, login, review, and permission prompts
+- tapOn:
+    text: "Skip"
+    optional: true
+- tapOn:
+    text: "Next"
+    optional: true
+- tapOn:
+    text: "Continue"
+    optional: true
+- tapOn:
+    text: "Get started"
+    optional: true
+- tapOn:
+    text: "Done"
+    optional: true
+- tapOn:
+    text: "Not now"
+    optional: true
+- tapOn:
+    text: "Continue without logging in"
+    optional: true
+- tapOn:
+    text: "Allow"
+    optional: true
+- waitForAnimationToEnd
+
+# Retry common blockers once more in case they appear after a transition
+- tapOn:
+    text: "Skip"
+    optional: true
+- tapOn:
+    text: "Not now"
+    optional: true
+- tapOn:
+    text: "Continue without logging in"
+    optional: true
+- tapOn:
+    text: "Done"
+    optional: true
+- waitForAnimationToEnd
+
+# 2. Confirm the main Explore or Search experience is visible
+- extendedWaitUntil:
+    visible:
+      text: "Search Wikipedia|Search|Explore"
+    timeout: 20000
+- assertVisible:
+    text: "Search Wikipedia|Search|Explore"
+
+# 3. Tap the Search field
+- tapOn:
+    text: "Search Wikipedia|Search"
+- waitForAnimationToEnd
+
+# 4. Type the query from test data
+- inputText: "${SEARCH_QUERY}"
+
+# 5. Submit the search and wait for results
+- pressKey: Enter
+- waitForAnimationToEnd
+- extendedWaitUntil:
+    visible:
+      text: "${ASSERT_TITLE}|${SEARCH_QUERY}"
+    timeout: 20000
+
+# 6. Open the first search result article
+# Prefer the expected article row when visible; this avoids re-tapping the search field.
+- tapOn:
+    text: "${ASSERT_TITLE}|${SEARCH_QUERY}"
+- waitForAnimationToEnd
+
+# 7. On the article page, wait for content to load, then scroll until a related section is visible
+- extendedWaitUntil:
+    visible:
+      text: "${ASSERT_TITLE}|${SEARCH_QUERY}|Contents|Read in another language"
+    timeout: 20000
+
+# First confirm article/title evidence before deeper scrolling
+- assertVisible:
+    text: "${ASSERT_TITLE}|${SEARCH_QUERY}"
+
+# Try to find a relevant section; optional so the flow does not fail if this article uses different headings
+- scrollUntilVisible:
+    element:
+      text: "${ARTICLE_HINT}|Early life|Scientific|Awards"
+    direction: DOWN
+    timeout: 12000
+    speed: 40
+    optional: true
+
+# 8. Assert that the article title or ASSERT_TITLE-related heading is visible
+- assertVisible:
+    text: "${ASSERT_TITLE}|${ARTICLE_HINT}|Early life|Scientific|Awards"
+
+# 9. Navigate back to search or Explore if a back control is available
+- tapOn:
+    text: "Back"
+    optional: true
+- tapOn:
+    text: "Search"
+    optional: true
+- tapOn:
+    text: "Explore"
+    optional: true
+
+# 10. End by closing the app
+- stopApp

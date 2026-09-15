@@ -1,0 +1,10 @@
+appId: com.lambdatest.proverbial
+name: TestMu Proverbial sample smoke
+---
+- launchApp
+- assertVisible: "Colour|Color|Text|Proverbial"
+- tapOn:
+    text: "Colour|Color"
+    optional: true
+- assertVisible: "Colour|Color|Text|Proverbial"
+- stopApp

@@ -1,0 +1,37 @@
+# Cloud sample: TestMu AI HyperExecute (Maestro) + Proverbial sample APK.
+#
+#   export TESTMU_USERNAME=... TESTMU_ACCESS_KEY=...
+#   # LT_USERNAME / LT_ACCESS_KEY also work
+#   mobiflow apps install testmu --download-only
+#   mobiflow run cases/android_testmu_smoke.txt
+#
+# Frozen YAML: flows/android_testmu_smoke.yaml
+# This case sets provider/appPath so it runs on TestMu even if
+# mobiflow.config.yaml still says local. Omit those keys to run locally
+# after `mobiflow apps install testmu`.
+
+@cloud @testmu @proverbial
+appId: com.lambdatest.proverbial
+platform: android
+provider: testmu
+device: Pixel 6-14
+appPath: builds/testmu.apk
+realMobile: true
+codegen: false
+flow: flows/android_testmu_smoke.yaml
+explore: false
+heal: 0
+retries: 0
+timeout: 600
+
+expect:
+  - Colour|Color|Text|Proverbial
+
+task: |
+  On TestMu HyperExecute, launch the Proverbial sample app and confirm the
+  home chrome (Colour/Color, Text, or Proverbial). Optionally tap Colour.
+
+  1. Launch Proverbial
+  2. Confirm Colour, Color, Text, or Proverbial is visible
+  3. Tap Colour or Color if shown (optional)
+  4. Assert Colour|Color|Text|Proverbial is still visible

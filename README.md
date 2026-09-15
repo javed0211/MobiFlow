@@ -56,7 +56,7 @@ mobiflow init
 #   Step 2/5 — LLM provider & models (writes llm.json)
 #   Step 3/5 — Device defaults + language (yaml | yaml+js)
 #   Step 4/5 — Detect missing packages → optional auto-install
-#   Step 5/5 — Write mobiflow.config.yaml + example case
+#   Step 5/5 — Write mobiflow.config.yaml + all sample cases
 
 export OPENAI_API_KEY=sk-...   # or AZURE_OPENAI_API_KEY / ANTHROPIC_API_KEY / …
 
@@ -156,7 +156,8 @@ mobiflow run cases/android_joplin_smoke.txt       # FOSS Joplin (install APK fir
 mobiflow run cases/android_bitwarden_smoke.txt    # FOSS Bitwarden (install APK first)
 ```
 
-FOSS sample apps (Joplin, Bitwarden, Wikipedia): [docs/SAMPLE_APPS.md](docs/SAMPLE_APPS.md).
+FOSS sample apps (Joplin, Bitwarden, Wikipedia, WDIO) and cloud demos
+(BrowserStack Wikipedia sample, TestMu Proverbial): [docs/SAMPLE_APPS.md](docs/SAMPLE_APPS.md).
 
 ## Commands
 
@@ -164,7 +165,8 @@ FOSS sample apps (Joplin, Bitwarden, Wikipedia): [docs/SAMPLE_APPS.md](docs/SAMP
 |---------|----------|
 | `mobiflow init` | Wizard / non-interactive scaffold (+ optional deps install) |
 | `mobiflow setup` | Detect / auto-install missing Maestro, JDK, pip packages |
-| `mobiflow apps list` / `apps install wikipedia` | Download FOSS sample APKs + install on connected device |
+| `mobiflow apps list` / `apps install wikipedia` | Download sample APKs (Wikipedia, Joplin, WDIO, BrowserStack, TestMu) |
+| `mobiflow apps install /path/to/app.apk` | Install a local APK/IPA (Sauce Labs demo, etc.) |
 | `mobiflow run <case.txt>` | Explore → LLM YAML → device (+ heal) |
 | `mobiflow run cases/ [--tag smoke]` | Suite: all (or tagged) cases + aggregate JUnit/HTML |
 | `mobiflow suite [cases/]` | Same as `run` on a directory (defaults to `cases/`) |
@@ -220,7 +222,12 @@ Set `device.provider` to `browserstack` or `testmu` to run on real devices in th
 
 ```bash
 export BROWSERSTACK_USERNAME=... BROWSERSTACK_ACCESS_KEY=...
-# or TESTMU_USERNAME / TESTMU_ACCESS_KEY (LT_* aliases work)
+mobiflow apps install browserstack --download-only
+mobiflow run cases/android_browserstack_smoke.txt
+
+export TESTMU_USERNAME=... TESTMU_ACCESS_KEY=...
+mobiflow apps install testmu --download-only
+mobiflow run cases/android_testmu_smoke.txt
 ```
 
 ## Pipeline

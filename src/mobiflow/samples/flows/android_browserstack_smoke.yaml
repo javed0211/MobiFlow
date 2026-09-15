@@ -1,0 +1,16 @@
+appId: org.wikipedia
+name: BrowserStack Wikipedia sample smoke
+env:
+  SEARCH_QUERY: Ada Lovelace
+---
+- launchApp
+- tapOn:
+    text: "Skip|Continue|Got it|Dismiss|Not now"
+    optional: true
+- assertVisible: "Search"
+- tapOn: "Search"
+- inputText: ${SEARCH_QUERY}
+- hideKeyboard:
+    optional: true
+- assertVisible: "Search"
+- stopApp

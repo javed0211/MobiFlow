@@ -86,7 +86,7 @@ def init_cmd(
     yes: bool,
     install_deps: bool | None,
 ) -> None:
-    """Interactive project setup (LLM catalog, device defaults, example case)."""
+    """Interactive project setup (LLM catalog, device defaults, sample cases)."""
     try:
         run_init(
             mode=mode,
@@ -174,7 +174,10 @@ def setup_cmd(repo: str | None, install_adb: bool, check_only: bool) -> None:
 
 @main.group("apps")
 def apps_group() -> None:
-    """Download / install FOSS sample apps (Wikipedia, Joplin)."""
+    """Download sample apps, or install a local APK/IPA on a device."""
+
+
+main.add_command(apps_group, "app")
 
 
 @apps_group.command("list")
@@ -182,19 +185,21 @@ def apps_list() -> None:
     """Show sample apps that can be downloaded/installed."""
     from mobiflow.sample_apps import list_sample_apps
 
-    console.print("[bold]Sample FOSS apps[/bold] (APKs download on demand — not shipped)\n")
+    console.print("[bold]Sample apps[/bold] (APKs download on demand — not shipped)\n")
     for app in list_sample_apps():
         console.print(f"  [cyan]{app.name}[/cyan]  {app.label}")
         console.print(f"       android={app.app_id_android}  ios={app.app_id_ios}")
         console.print(f"       [dim]{app.notes}[/dim]")
     console.print(
-        "\n[dim]Install: mobiflow apps install wikipedia[/dim]\n"
-        "[dim]Binaries land in ./builds/ (gitignored).[/dim]"
+        "\n[dim]Catalog:  mobiflow apps install wikipedia|joplin|wdio[/dim]\n"
+        "[dim]Local APK: mobiflow apps install /path/to/app.apk[/dim]\n"
+        "[dim]Catalog binaries land in ./builds/ (gitignored).[/dim]"
     )
 
 
 @apps_group.command("install")
 @click.argument("name")
+@click.argument("package", required=False, type=click.Path())
 @click.option("--repo", default=None, help="Project path (builds/ lives here)")
 @click.option("--platform", default="android", show_default=True, help="android|ios")
 @click.option("--device", "device_id", default=None, help="adb serial / UDID")
@@ -204,6 +209,7 @@ def apps_list() -> None:
 @click.option("--force", is_flag=True, help="Re-download even if builds/<name>.apk exists")
 def apps_install(
     name: str,
+    package: str | None,
     repo: str | None,
     platform: str,
     device_id: str | None,
@@ -212,12 +218,15 @@ def apps_install(
     download_only: bool,
     force: bool,
 ) -> None:
-    """Download (Android) and install a sample app on the connected device.
+    """Install a catalog sample app, or a local APK/IPA/.app file.
 
     Examples:
       mobiflow apps install wikipedia
+      mobiflow apps install browserstack --download-only
+      mobiflow apps install testmu --download-only
+      mobiflow apps install /path/to/MyDemoApp.apk
+      mobiflow apps install saucelabs /path/to/MyDemoApp.apk
       mobiflow apps install joplin --device emulator-5554
-      mobiflow apps install wikipedia --download-only
     """
     import asyncio
 
@@ -225,6 +234,7 @@ def apps_install(
 
     root = Path(repo).expanduser().resolve() if repo else Path.cwd()
     dest = default_builds_dir(root)
+    local_apk = apk_path or package
 
     def progress(msg: str) -> None:
         console.print(f"  [dim]→[/dim] {msg}")
@@ -235,7 +245,7 @@ def apps_install(
                 name,
                 platform=platform,
                 device_id=device_id,
-                apk_path=apk_path,
+                apk_path=local_apk,
                 app_path=app_bundle,
                 dest_dir=dest,
                 download_only=download_only,
@@ -964,12 +974,14 @@ def explore_cmd(
     _print_warnings(cfg)
 
     case_goal = ""
+    device_cfg = cfg.device
     if case_file:
         case = load_case(case_file)
         case_goal = case.explore_task()
-        app_id = app_id or case.app_id or cfg.device.app_id
-        platform = platform or case.platform or cfg.device.platform
-        device_id = device_id or case.device_id or cfg.device.device_id
+        device_cfg = case.overlay_device(cfg.device, device_id=device_id)
+        app_id = app_id or case.app_id or device_cfg.app_id
+        platform = platform or case.platform or device_cfg.platform
+        device_id = device_id or device_cfg.device_id
     else:
         app_id = app_id or cfg.device.app_id
         platform = platform or cfg.device.platform
@@ -980,7 +992,7 @@ def explore_cmd(
         console.print("[red]Provide a goal argument or --case file.[/red]")
         sys.exit(1)
 
-    if cfg.device.is_cloud():
+    if device_cfg.is_cloud():
         console.print(
             "[yellow]Explore interactive/live device mode is local-only. "
             "Using plan-only explore for cloud provider.[/yellow]"
@@ -992,7 +1004,7 @@ def explore_cmd(
         console.print(f"  [dim]→[/dim] {msg}")
 
     async def _run():
-        if cfg.device.is_cloud():
+        if device_cfg.is_cloud():
             return await plan_only_explore(
                 goal=goal_text,
                 app_id=app_id or "",
@@ -1004,13 +1016,13 @@ def explore_cmd(
         ensured = await ensure_device(
             platform_pref=platform or "android",
             device_id=device_id,
-            auto_start=cfg.device.auto_start,
-            timeout_s=float(cfg.device.boot_timeout_s),
+            auto_start=device_cfg.auto_start,
+            timeout_s=float(device_cfg.boot_timeout_s),
             progress=progress,
-            use_maestro_cli=bool(cfg.device.use_maestro_cli),
-            device_model=str(cfg.device.device_model or ""),
-            device_os=str(cfg.device.device_os or ""),
-            device_locale=str(cfg.device.device_locale or ""),
+            use_maestro_cli=bool(device_cfg.use_maestro_cli),
+            device_model=str(device_cfg.device_model or ""),
+            device_os=str(device_cfg.device_os or ""),
+            device_locale=str(device_cfg.device_locale or ""),
         )
         if not ensured.get("ok") or not ensured.get("device"):
             console.print(

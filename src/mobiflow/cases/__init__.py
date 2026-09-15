@@ -52,6 +52,19 @@ explore: true            # discovery LLM before codegen
 data: data/example.json   # relative to case dir or repo; also absolute OK
 # expect:
 #   - Search
+#
+# Cloud labs (optional — also set device.provider in mobiflow.config.yaml):
+# provider: browserstack   # or testmu | maestro | local
+# device: Google Pixel 7-13.0
+# appPath: builds/browserstack.apk
+# # appUrl: bs://…
+# # realMobile: true
+#
+# E2E API hooks (Maestro onFlowStart / onFlowComplete — HTTP via GraalJS http.*):
+# onFlowStart:
+#   - POST ${API_BASE}/test-users {"email":"${USER_EMAIL}"}
+# onFlowComplete:
+#   - DELETE ${API_BASE}/test-users/${output.userId}
 
 task: |
   Open the Wikipedia app, dismiss any onboarding, and confirm Search is visible.
@@ -96,6 +109,20 @@ _META_ALIASES: dict[str, str] = {
     "timeout": "timeout_s",
     "timeouts": "timeout_s",
     "strict": "strict",
+    "onflowstart": "on_flow_start",
+    "before": "on_flow_start",
+    "beforehook": "on_flow_start",
+    "setup": "on_flow_start",
+    "onflowcomplete": "on_flow_complete",
+    "after": "on_flow_complete",
+    "afterhook": "on_flow_complete",
+    "teardown": "on_flow_complete",
+    "provider": "provider",
+    "lab": "provider",
+    "deviceprovider": "provider",
+    "apppath": "app_path",
+    "appurl": "app_url",
+    "realmobile": "real_mobile",
 }
 
 _KNOWN_META_DISPLAY = sorted(
@@ -123,6 +150,14 @@ _KNOWN_META_DISPLAY = sorted(
         "adaptive",
         "timeout",
         "strict",
+        "onFlowStart",
+        "onFlowComplete",
+        "before",
+        "after",
+        "provider",
+        "appPath",
+        "appUrl",
+        "realMobile",
     }
 )
 
@@ -170,12 +205,18 @@ class TestCase:
     app_id: str = ""
     platform: str = "android"
     device_id: str | None = None
+    provider: str = ""  # local | browserstack | testmu | maestro
+    app_path: str = ""  # .apk / .ipa to upload (cloud) or install
+    app_url: str = ""  # already-uploaded bs://… or lt://…
+    real_mobile: bool | None = None  # TestMu real vs virtual
     tags: list[str] = field(default_factory=list)
     steps: list[str] = field(default_factory=list)
     flow: str = ""  # optional frozen Maestro YAML path
     clear_state: bool = False
     env: dict[str, str] = field(default_factory=dict)
     expect: list[str] = field(default_factory=list)  # forced assertVisible texts
+    on_flow_start: list[str] = field(default_factory=list)
+    on_flow_complete: list[str] = field(default_factory=list)
     data_path: str = ""  # relative or absolute path to JSON/YAML/.env
     run: CaseRunOptions = field(default_factory=CaseRunOptions)
     parse_warnings: list[str] = field(default_factory=list)
@@ -192,7 +233,16 @@ class TestCase:
             parts.append(self.task.strip())
         if data_block.strip():
             parts.append(data_block.strip())
+        from mobiflow.hooks import hooks_prompt_block
+
+        hook_block = hooks_prompt_block(self.on_flow_start, self.on_flow_complete)
+        if hook_block:
+            parts.append(hook_block)
         return "\n\n".join(parts)
+
+    def overlay_device(self, device: Any, *, device_id: str | None = None) -> Any:
+        """CLI ``device_id`` > case provider/appPath/device > config ``DeviceConfig``."""
+        return overlay_device_config(device, self, device_id=device_id)
 
     def guidance_steps(self) -> list[str]:
         """Numbered guidance used for incremental classify (steps field or task body)."""
@@ -232,7 +282,8 @@ class TestCase:
 
 
 _META_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(.*)$")
-_TAG_RE = re.compile(r"^@(\w+)\s*$")
+_TAG_RE = re.compile(r"^(?:@\w+\s*)+$")
+_TAG_NAME_RE = re.compile(r"@(\w+)")
 _STEP_RE = re.compile(r"^\d+\.\s+(.+)$")
 _ENV_LINE_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$")
 _LOOSE_KEY_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)\s*:")
@@ -457,10 +508,43 @@ def resolve_run_options(
     )
 
 
+def overlay_device_config(
+    device: Any,
+    case: TestCase,
+    *,
+    device_id: str | None = None,
+) -> Any:
+    """Merge CLI device id and case cloud fields onto a ``DeviceConfig`` copy."""
+    updates: dict[str, Any] = {}
+    if (case.provider or "").strip():
+        updates["provider"] = case.provider.strip()
+    if (case.app_path or "").strip():
+        updates["app_path"] = case.app_path.strip()
+    if (case.app_url or "").strip():
+        updates["app_url"] = case.app_url.strip()
+    if case.real_mobile is not None:
+        updates["real_mobile"] = case.real_mobile
+    selected = device_id or case.device_id or getattr(device, "device_id", None)
+    if selected and selected != getattr(device, "device_id", None):
+        updates["device_id"] = selected
+    elif device_id is not None:
+        updates["device_id"] = device_id
+    if not updates:
+        return device
+    copier = getattr(device, "model_copy", None)
+    if callable(copier):
+        return copier(update=updates)
+    return device
+
+
 def parse_case_text(text: str, *, name: str = "case") -> TestCase:
     app_id = ""
     platform = "android"
     device_id = None
+    provider = ""
+    app_path = ""
+    app_url = ""
+    real_mobile: bool | None = None
     task_parts: list[str] = []
     tags: list[str] = []
     steps: list[str] = []
@@ -468,12 +552,15 @@ def parse_case_text(text: str, *, name: str = "case") -> TestCase:
     clear_state = False
     env: dict[str, str] = {}
     expect: list[str] = []
+    on_flow_start: list[str] = []
+    on_flow_complete: list[str] = []
     data_path = ""
     run = CaseRunOptions()
     warnings: list[str] = []
     in_task = False
     in_env = False
     in_expect = False
+    in_hooks: str | None = None
     strict = False
 
     def _apply_run(field: str, raw_val: str) -> None:
@@ -516,9 +603,10 @@ def parse_case_text(text: str, *, name: str = "case") -> TestCase:
             continue
         tag_m = _TAG_RE.match(stripped)
         if tag_m:
-            tags.append(tag_m.group(1))
+            tags.extend(_TAG_NAME_RE.findall(stripped))
             in_env = False
             in_expect = False
+            in_hooks = None
             continue
 
         meta_m = _META_RE.match(stripped)
@@ -539,6 +627,7 @@ def parse_case_text(text: str, *, name: str = "case") -> TestCase:
 
             in_env = False
             in_expect = False
+            in_hooks = None
             if field == "app_id":
                 app_id = val
                 in_task = False
@@ -547,6 +636,20 @@ def parse_case_text(text: str, *, name: str = "case") -> TestCase:
                 in_task = False
             elif field == "device_id":
                 device_id = val
+                in_task = False
+            elif field == "provider":
+                from mobiflow.cloud.base import normalize_provider
+
+                provider = normalize_provider(val).value
+                in_task = False
+            elif field == "app_path":
+                app_path = val.strip().strip("\"'")
+                in_task = False
+            elif field == "app_url":
+                app_url = val.strip().strip("\"'")
+                in_task = False
+            elif field == "real_mobile":
+                real_mobile = _parse_optional_bool(val)
                 in_task = False
             elif field == "task":
                 task_parts = [val]
@@ -576,6 +679,16 @@ def parse_case_text(text: str, *, name: str = "case") -> TestCase:
                 in_task = False
                 if val and val not in {"|", ">"}:
                     expect.append(val.strip().strip("\"'"))
+            elif field == "on_flow_start":
+                in_hooks = "start"
+                in_task = False
+                if val and val not in {"|", ">"}:
+                    on_flow_start.append(val.strip().lstrip("- ").strip())
+            elif field == "on_flow_complete":
+                in_hooks = "complete"
+                in_task = False
+                if val and val not in {"|", ">"}:
+                    on_flow_complete.append(val.strip().lstrip("- ").strip())
             else:
                 # run knobs
                 _apply_run(field, val)
@@ -584,7 +697,7 @@ def parse_case_text(text: str, *, name: str = "case") -> TestCase:
 
         # Bare "MaybeKey: …" that didn't match? already handled.
         # Unknown key-looking lines outside meta: warn if looks like key
-        if not in_task and not in_env and not in_expect:
+        if not in_task and not in_env and not in_expect and not in_hooks:
             loose = _LOOSE_KEY_RE.match(stripped)
             if loose and _normalize_meta_key(loose.group(1)) is None:
                 msg = f"Unknown case key '{loose.group(1)}' (ignored)"
@@ -610,6 +723,16 @@ def parse_case_text(text: str, *, name: str = "case") -> TestCase:
             if not _META_RE.match(stripped) and not _TAG_RE.match(stripped):
                 expect.append(stripped.strip("\"'"))
                 continue
+        if in_hooks:
+            target = on_flow_start if in_hooks == "start" else on_flow_complete
+            if stripped.startswith("-"):
+                target.append(stripped.lstrip("- ").strip())
+                continue
+            httpish = stripped.split(None, 1)
+            if httpish and httpish[0].upper() in {"GET", "POST", "PUT", "PATCH", "DELETE", "http"}:
+                target.append(stripped)
+                continue
+            in_hooks = None
         step_m = _STEP_RE.match(stripped)
         if step_m:
             steps.append(step_m.group(1).strip())
@@ -665,12 +788,18 @@ def parse_case_text(text: str, *, name: str = "case") -> TestCase:
         app_id=app_id,
         platform=platform,
         device_id=device_id,
+        provider=provider,
+        app_path=app_path,
+        app_url=app_url,
+        real_mobile=real_mobile,
         tags=tags,
         steps=steps,
         flow=flow,
         clear_state=clear_state,
         env=env,
         expect=expect,
+        on_flow_start=on_flow_start,
+        on_flow_complete=on_flow_complete,
         data_path=data_path,
         run=run,
         parse_warnings=warnings,

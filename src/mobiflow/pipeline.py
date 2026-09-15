@@ -211,10 +211,25 @@ def run_pipeline(
     flow_dir = cfg.flow_dir_path()
     flow_dir.mkdir(parents=True, exist_ok=True)
 
-    app_id = case.app_id or cfg.device.app_id
-    platform = case.platform or cfg.device.platform
-    selected_device = device_id or case.device_id or cfg.device.device_id
+    device = case.overlay_device(cfg.device, device_id=device_id)
+    app_id = case.app_id or device.app_id
+    platform = case.platform or device.platform
+    selected_device = device.device_id
     allow_js = cfg.stack.js_enabled()
+    from mobiflow.hooks import API_CODEGEN_HINT, detect_api_intent
+
+    hook_blob = "\n".join(
+        list(case.on_flow_start or []) + list(case.on_flow_complete or [])
+    )
+    api_intent = detect_api_intent(case.task + "\n" + hook_blob) or bool(
+        case.on_flow_start or case.on_flow_complete
+    )
+    if api_intent and not allow_js:
+        console.print(
+            "  [yellow]API/hooks in case — enabling Maestro JS "
+            "(http.* requires yaml+js)[/yellow]"
+        )
+        allow_js = True
 
     codegen = cfg.codegen_profile()
     discovery = cfg.discovery_profile()
@@ -250,6 +265,8 @@ def run_pipeline(
             raise ValueError(f"Case data: {exc}") from exc
 
     task_text = case.explore_task(data_block=data_block)
+    if api_intent:
+        task_text = f"{task_text}\n\n{API_CODEGEN_HINT}"
 
     def progress(msg: str) -> None:
         console.print(f"  [dim]→[/dim] {msg}")
@@ -262,15 +279,15 @@ def run_pipeline(
         console.print(
             f"  [cyan]data[/cyan] {data_path_resolved}  ({len(data_flat)} key(s))"
         )
-    provider = cfg.device.provider or "local"
+    provider = device.provider or "local"
     console.print(
         f"  provider={provider}  platform={platform}  appId={app_id or '(infer)'}  "
         f"device={selected_device or '(auto)'}"
     )
-    if cfg.device.is_cloud():
+    if device.is_cloud():
         console.print(
-            f"  cloud app_path={cfg.device.app_path or '-'}  "
-            f"app_url={cfg.device.app_url or '-'}"
+            f"  cloud app_path={device.app_path or '-'}  "
+            f"app_url={device.app_url or '-'}"
         )
     console.print(
         f"  LLM codegen={cfg.llm.codegen}  discovery={cfg.llm.discovery}  "
@@ -331,6 +348,9 @@ def run_pipeline(
         explore_goal = plan.get("explore_goal")
         codegen_goal = plan.get("codegen_goal")
 
+    if api_intent and codegen_goal:
+        codegen_goal = f"{codegen_goal}\n\n{API_CODEGEN_HINT}"
+
     # Merge order: config env < data file < case env (case wins)
     flow_env = merge_flow_env(cfg.run.env, data_flat, case.env)
     if flow_env:
@@ -341,10 +361,10 @@ def run_pipeline(
     run_timeout = (
         opts.timeout_s
         if opts.timeout_s is not None
-        else max(cfg.run.timeout_s, cfg.device.boot_timeout_s)
+        else max(cfg.run.timeout_s, device.boot_timeout_s)
     )
-    if cfg.device.is_cloud():
-        run_timeout = max(run_timeout, int(cfg.device.cloud_timeout_s or 1800))
+    if device.is_cloud():
+        run_timeout = max(run_timeout, int(device.cloud_timeout_s or 1800))
 
     stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
     started_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -369,25 +389,27 @@ def run_pipeline(
             timeout_s=run_timeout,
             live=not gen_only,
             allow_js=allow_js,
-            auto_start_device=cfg.device.auto_start and not gen_only and not cfg.device.is_cloud(),
+            auto_start_device=device.auto_start and not gen_only and not device.is_cloud(),
             progress=progress,
-            device_config=cfg.device,
+            device_config=device,
             artifact_dir=run_artifact_dir,
             clear_state=bool(case.clear_state),
             preflight=list(cfg.run.preflight or []),
-            app_path=cfg.device.app_path or "",
+            app_path=device.app_path or "",
             retries=0 if gen_only else opts.retries,
             reuse_flow_yaml=reuse_yaml,
             reuse_scripts=reuse_scripts or None,
             flow_env=flow_env or None,
             expect=list(case.expect or []),
+            on_flow_start=list(case.on_flow_start or []),
+            on_flow_complete=list(case.on_flow_complete or []),
             prior_flow_yaml=prior_yaml,
             prior_scripts=prior_scripts or None,
             extend=extend,
             replay_prefix=replay_prefix,
             explore_goal=explore_goal,
             codegen_goal=codegen_goal,
-            record_video=bool(cfg.run.video) and not cfg.device.is_cloud(),
+            record_video=bool(cfg.run.video) and not device.is_cloud(),
             include_tags=list(cfg.run.include_tags or []),
             exclude_tags=list(cfg.run.exclude_tags or []),
             maestro_config=(cfg.run.maestro_config or "").strip() or None,

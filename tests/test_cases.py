@@ -27,6 +27,20 @@ task: Open Wikipedia and confirm Search
     assert "Search" in c.task
 
 
+def test_parse_multiple_tags_on_one_line():
+    c = parse_case_text(
+        """
+@cloud @browserstack
+appId: org.wikipedia
+platform: android
+task: Open Search
+"""
+    )
+    assert c.tags == ["cloud", "browserstack"]
+    assert c.has_tag("cloud")
+    assert c.has_tag("browserstack")
+
+
 def test_parse_guided_steps():
     c = parse_case_text(
         """
@@ -161,3 +175,74 @@ def test_maestro_yaml_helpers():
     assert resolve_app_id("", "ios", "open Joplin") == "net.cozic.joplin"
     assert resolve_app_id("", "android", "open bitwarden vault") == "com.x8bit.bitwarden"
     assert resolve_app_id("", "ios", "bitwarden login") == "com.8bit.bitwarden"
+    assert resolve_app_id("", "android", "open wdio native demo") == "com.wdiodemoapp"
+    assert resolve_app_id("", "android", "launch proverbial") == "com.lambdatest.proverbial"
+    assert resolve_app_id("", "ios", "open testmu sample") == "com.lambdatest.proverbial"
+
+
+def test_load_cloud_sample_cases():
+    from mobiflow.cases import load_case
+
+    root = Path(__file__).resolve().parents[1]
+    bs = load_case(root / "cases" / "android_browserstack_smoke.txt")
+    assert bs.provider == "browserstack"
+    assert bs.app_path == "builds/browserstack.apk"
+    assert bs.app_id == "org.wikipedia"
+    assert bs.has_tag("cloud")
+
+    tm = load_case(root / "cases" / "android_testmu_smoke.txt")
+    assert tm.provider == "testmu"
+    assert tm.app_path == "builds/testmu.apk"
+    assert tm.app_id == "com.lambdatest.proverbial"
+    assert tm.real_mobile is True
+    assert tm.has_tag("proverbial")
+
+
+def test_parse_cloud_case_device_overlay():
+    from mobiflow.cases import overlay_device_config
+
+    c = parse_case_text(
+        """
+@cloud @browserstack
+appId: org.wikipedia
+platform: android
+provider: bs
+device: Google Pixel 7-13.0
+appPath: builds/browserstack.apk
+appUrl: bs://abc
+realMobile: true
+task: Open Search
+"""
+    )
+    assert c.provider == "browserstack"
+    assert c.device_id == "Google Pixel 7-13.0"
+    assert c.app_path == "builds/browserstack.apk"
+    assert c.app_url == "bs://abc"
+    assert c.real_mobile is True
+
+    cfg_device = DeviceConfig(provider="local", platform="android")
+    overlaid = overlay_device_config(cfg_device, c)
+    assert overlaid.provider == "browserstack"
+    assert overlaid.is_cloud()
+    assert overlaid.device_id == "Google Pixel 7-13.0"
+    assert overlaid.app_path == "builds/browserstack.apk"
+    assert overlaid.app_url == "bs://abc"
+    assert overlaid.real_mobile is True
+
+    cli = overlay_device_config(cfg_device, c, device_id="Samsung Galaxy S23-13.0")
+    assert cli.device_id == "Samsung Galaxy S23-13.0"
+
+
+def test_parse_testmu_provider_alias():
+    c = parse_case_text(
+        """
+appId: com.lambdatest.proverbial
+platform: android
+provider: lambdatest
+appPath: builds/testmu.apk
+task: Open Proverbial
+"""
+    )
+    assert c.provider == "testmu"
+    assert c.app_path == "builds/testmu.apk"
+

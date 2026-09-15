@@ -48,9 +48,26 @@ _KNOWN_APP_IDS = {
     "settings": {"android": "com.android.settings", "ios": "com.apple.Preferences"},
     "chrome": {"android": "com.android.chrome", "ios": "com.google.chrome.ios"},
     "safari": {"android": "com.android.chrome", "ios": "com.apple.mobilesafari"},
-    # FOSS sample apps (install yourself — see docs/SAMPLE_APPS.md)
+    # FOSS / vendor sample apps (install yourself — see docs/SAMPLE_APPS.md)
     "joplin": {"android": "net.cozic.joplin", "ios": "net.cozic.joplin"},
     "bitwarden": {"android": "com.x8bit.bitwarden", "ios": "com.8bit.bitwarden"},
+    "wdio": {"android": "com.wdiodemoapp", "ios": "org.reactjs.native.example.wdiodemoapp"},
+    "webdriverio": {
+        "android": "com.wdiodemoapp",
+        "ios": "org.reactjs.native.example.wdiodemoapp",
+    },
+    "proverbial": {
+        "android": "com.lambdatest.proverbial",
+        "ios": "com.lambdatest.proverbial",
+    },
+    "testmu": {
+        "android": "com.lambdatest.proverbial",
+        "ios": "com.lambdatest.proverbial",
+    },
+    "lambdatest": {
+        "android": "com.lambdatest.proverbial",
+        "ios": "com.lambdatest.proverbial",
+    },
 }
 
 
@@ -323,13 +340,15 @@ Rules:
    else stable visible text / accessibility ids.
 4) When exploration results include a grounded plan, follow that plan closely.
 5) Reuse: extract repeated sequences into nested flows and call with runFlow.
-   Use onFlowStart / onFlowComplete hooks for setup/teardown when helpful.
+   Use onFlowStart / onFlowComplete hooks for setup/teardown (including HTTP APIs
+   via runScript). YAML-only projects cannot call HTTP — keep those as UI steps.
 6) iOS Settings: com.apple.Preferences. Android Settings: com.android.settings.
 7) Mobile web (https://): openLink + Safari/Chrome appId. Never emit Playwright/Appium.
 8) Known apps — use these appIds when the goal names them:
    Wikipedia: org.wikipedia (Android) / org.wikimedia.wikipedia (iOS).
    Joplin: net.cozic.joplin (Android + iOS).
    Bitwarden: com.x8bit.bitwarden (Android) / com.8bit.bitwarden (iOS).
+   WebdriverIO Native Demo: com.wdiodemoapp (Android) / org.reactjs.native.example.wdiodemoapp (iOS).
 9) After launchApp, optionally dismiss Skip/Next/Continue/Allow/Not now.
 9b) Always end happy-path flows with assertVisible (goal evidence); prefer known selectors.
 9c) Never use maestro.visible(...) / maestro.isVisible — those APIs do not exist.
@@ -357,7 +376,10 @@ Rules:
    - Prefer the global `output` object to share values across steps.
    - You may use console.log for debugging; no Node.js / filesystem APIs.
    - faker may be used for synthetic data when helpful.
-   - Optional http helpers for API setup when needed.
+   - Optional HTTP via built-in GraalJS ``http.get/post/put/delete`` and ``json(body)``.
+     No Node fetch/axios. Put setup APIs in onFlowStart and teardown in onFlowComplete
+     (YAML config section above ---). Mid-flow APIs: runScript between UI steps.
+     Save responses on output.* and use ${output.key} later.
    - NEVER call maestro.visible / maestro.isVisible (undefined). Visibility checks
      belong in YAML: assertVisible / assertNotVisible / extendedWaitUntil.
      assertTrue is only for real JS expressions over output.* / env values.
@@ -372,6 +394,7 @@ Rules:
    Wikipedia: org.wikipedia (Android) / org.wikimedia.wikipedia (iOS).
    Joplin: net.cozic.joplin (Android + iOS).
    Bitwarden: com.x8bit.bitwarden (Android) / com.8bit.bitwarden (iOS).
+   WebdriverIO Native Demo: com.wdiodemoapp (Android) / org.reactjs.native.example.wdiodemoapp (iOS).
 10) After launchApp, optionally dismiss Skip/Next/Continue/Allow/Not now.
 10b) Always end happy-path flows with assertVisible (goal evidence); prefer known selectors.
 10c) For OR visibility (A or B), prefer assertVisible with regex "A|B" or two optional
@@ -473,7 +496,12 @@ async def generate_flow_bundle(
     progress: ProgressFn = None,
 ) -> FlowBundle:
     """NL (or pasted YAML) → Maestro FlowBundle (YAML + optional JS)."""
+    from mobiflow.hooks import API_CODEGEN_HINT, detect_api_intent
+
     goal = (goal or "").strip()
+    api_intent = detect_api_intent(goal)
+    if api_intent:
+        allow_js = True
     if looks_like_maestro_yaml(goal):
         return parse_flow_bundle(goal, app_id=app_id)
 
@@ -481,7 +509,8 @@ async def generate_flow_bundle(
     # Deterministic shortcuts (YAML-only — no JS needed) when no explore/repair context
     gl = goal.lower()
     if (
-        not extend
+        not api_intent
+        and not extend
         and not exploration.strip()
         and not previous_yaml
         and "settings" in gl
@@ -489,7 +518,8 @@ async def generate_flow_bundle(
     ):
         return FlowBundle(flow_yaml=_settings_flow(platform))
     if (
-        not extend
+        not api_intent
+        and not extend
         and not exploration.strip()
         and not previous_yaml
         and "wikipedia" in gl
@@ -517,6 +547,8 @@ async def generate_flow_bundle(
         f"JavaScript enabled: {str(allow_js).lower()}",
         f"Goal:\n{goal}",
     ]
+    if api_intent:
+        user_parts.append(API_CODEGEN_HINT)
     if exploration.strip():
         user_parts.append(exploration.strip()[:12000])
     if previous_yaml.strip():
@@ -985,6 +1017,8 @@ async def run_mobile_task(
     include_tags: list[str] | None = None,
     exclude_tags: list[str] | None = None,
     maestro_config: str | Path | None = None,
+    on_flow_start: list[str] | None = None,
+    on_flow_complete: list[str] | None = None,
 ) -> dict[str, Any]:
     """Full agent loop: preflight → explore → author YAML(+JS) → run → heal.
 
@@ -1319,6 +1353,15 @@ async def run_mobile_task(
 
     if expect:
         flow = ensure_expect_asserts(flow, list(expect))
+    if on_flow_start or on_flow_complete:
+        from mobiflow.hooks import apply_flow_hooks
+
+        flow, scripts = apply_flow_hooks(
+            flow,
+            scripts,
+            start_steps=list(on_flow_start or []),
+            complete_steps=list(on_flow_complete or []),
+        )
     if scripts:
         _p(f"Maestro bundle ready ({len(scripts)} JS file(s)).")
     else:
@@ -1473,6 +1516,17 @@ async def run_mobile_task(
         flow = bundle.flow_yaml
         scripts = bundle.scripts
         codegen_usage = codegen_usage.merged(bundle.usage)
+        if expect:
+            flow = ensure_expect_asserts(flow, list(expect))
+        if on_flow_start or on_flow_complete:
+            from mobiflow.hooks import apply_flow_hooks
+
+            flow, scripts = apply_flow_hooks(
+                flow,
+                scripts,
+                start_steps=list(on_flow_start or []),
+                complete_steps=list(on_flow_complete or []),
+            )
         result["flow_yaml"] = flow
         result["scripts"] = scripts
         result["codegen_usage"] = codegen_usage.to_dict()
