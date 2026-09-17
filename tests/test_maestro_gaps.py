@@ -6,7 +6,12 @@ from pathlib import Path
 
 from mobiflow.cloud.base import CloudProvider, is_cloud_provider, normalize_provider
 from mobiflow.config import DeviceConfig, RunConfig
-from mobiflow.maestro import _maestro_test_args, find_local_videos
+from mobiflow.maestro import (
+    _maestro_test_args,
+    find_local_videos,
+    maestro_global_args,
+    prepare_exec_args,
+)
 
 
 def test_normalize_provider_maestro():
@@ -49,8 +54,15 @@ def test_maestro_test_args_tags_platform_config(tmp_path: Path):
         platform="android",
     )
     joined = " ".join(args)
-    assert args[0:2] == ["maestro", "test"]
-    assert "--device" in args and "emulator-5554" in args
+    assert args[:6] == [
+        "maestro",
+        "--device",
+        "emulator-5554",
+        "--platform",
+        "android",
+        "test",
+    ]
+    assert args.index("--device") < args.index("test")
     assert "--platform" in args and "android" in args
     assert "--include-tags=smoke,android" in args
     assert "--exclude-tags=flaky" in args
@@ -68,3 +80,40 @@ def test_find_local_videos(tmp_path: Path):
     found = find_local_videos(tmp_path)
     assert found == [mp4]
     assert find_local_videos(tmp_path / "missing") == []
+
+
+def test_maestro_global_args_before_subcommand():
+    args = maestro_global_args("maestro", device_id="emulator-5554", platform="android")
+    args.extend(["record", "--local", "flow.yaml", "out.mp4"])
+    assert args[:6] == [
+        "maestro",
+        "--device",
+        "emulator-5554",
+        "--platform",
+        "android",
+        "record",
+    ]
+
+
+def test_prepare_exec_args_quotes_ampersand_on_windows(monkeypatch):
+    monkeypatch.setattr("mobiflow.maestro.os.name", "nt")
+    raw = [
+        r"C:\maestro\bin\maestro.bat",
+        "--device",
+        "emulator-5554",
+        "test",
+        r"C:\Users\me\OneDrive - Capgemini\flow.yaml",
+        "--env",
+        "API_BASE=https://api.example.com/users?page=1&limit=10",
+    ]
+    wrapped = prepare_exec_args(raw)
+    assert wrapped[1] == "/c"
+    cmdline = wrapped[2]
+    assert "&limit=10" in cmdline
+    assert '"API_BASE=https://api.example.com/users?page=1&limit=10"' in cmdline
+    assert '"C:\\Users\\me\\OneDrive - Capgemini\\flow.yaml"' in cmdline
+
+
+def test_prepare_exec_args_noop_on_posix():
+    raw = ["maestro", "test", "flow.yaml", "--env", "API_BASE=https://x?a=1&limit=10"]
+    assert prepare_exec_args(raw) == raw

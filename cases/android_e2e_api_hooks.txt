@@ -20,8 +20,8 @@ timeout: 240
 env:
   API_BASE = https://reqres.in
   USER_NAME = MobiFlow E2E
-  LOGIN_EMAIL = bob@example.com
-  LOGIN_PASSWORD = s3cret
+  LOGIN_EMAIL = test@webdriver.io
+  LOGIN_PASSWORD = Test1234!
 
 onFlowStart:
   - runScript: scripts/e2e_seed.js

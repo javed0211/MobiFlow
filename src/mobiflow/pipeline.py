@@ -19,7 +19,7 @@ from mobiflow.incremental import (
     load_guidance,
     save_guidance,
 )
-from mobiflow.maestro import run_mobile_task
+from mobiflow.maestro import infer_platform, run_mobile_task
 from mobiflow.reporting import (
     ReportCase,
     collect_screenshots,
@@ -215,6 +215,12 @@ def run_pipeline(
     app_id = case.app_id or device.app_id
     platform = case.platform or device.platform
     selected_device = device.device_id
+    if selected_device and infer_platform(selected_device, platform).lower() != platform.lower():
+        console.print(
+            f"  [yellow]device {selected_device!r} is not {platform}; "
+            "auto-selecting a matching device[/yellow]"
+        )
+        selected_device = None
     allow_js = cfg.stack.js_enabled()
     from mobiflow.hooks import API_CODEGEN_HINT, detect_api_intent
 

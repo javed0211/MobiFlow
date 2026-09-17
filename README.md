@@ -237,7 +237,7 @@ mobiflow run cases/android_testmu_smoke.txt
 2. Resolve run mode (codegen / reuse / incremental / extend) — CLI > case > config
 3. Explore app with discovery LLM (or replay prefix + gap for --incremental)
 4. Author / extend Maestro YAML (+ JS when enabled)
-5. Local: maestro test --device <id>
+5. Local: maestro --device <id> test <flow.yaml>
    Cloud: upload app + suite → Maestro Cloud / BrowserStack / TestMu HyperExecute
 6. On fail → repair with failure log (≤ heal) → re-run
 7. Write flows/<case>.yaml (+ scripts), guidance stamp, reports under .mobiflow/

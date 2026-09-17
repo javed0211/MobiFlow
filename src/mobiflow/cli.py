@@ -1249,7 +1249,12 @@ def studio_cmd(repo: str | None, device_id: str | None) -> None:
     import os
     import subprocess
 
-    from mobiflow.maestro import resolve_java_home, resolve_maestro_binary
+    from mobiflow.maestro import (
+        maestro_global_args,
+        prepare_exec_args,
+        resolve_java_home,
+        resolve_maestro_binary,
+    )
 
     cfg = None
     try:
@@ -1273,9 +1278,8 @@ def studio_cmd(repo: str | None, device_id: str | None) -> None:
         )
         sys.exit(1)
 
-    args = [binary, "studio"]
-    if device_id:
-        args.extend(["--device", device_id])
+    args = maestro_global_args(binary, device_id=device_id)
+    args.append("studio")
 
     env = dict(os.environ)
     env.setdefault("MAESTRO_CLI_NO_ANALYTICS", "1")
@@ -1286,7 +1290,7 @@ def studio_cmd(repo: str | None, device_id: str | None) -> None:
 
     console.print(f"[dim]Launching:[/dim] {' '.join(args)}")
     try:
-        raise SystemExit(subprocess.call(args, env=env))
+        raise SystemExit(subprocess.call(prepare_exec_args(args), env=env))
     except FileNotFoundError:
         console.print(f"[red]Failed to launch[/red] {binary}")
         sys.exit(1)

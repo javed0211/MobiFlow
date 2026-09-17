@@ -109,7 +109,11 @@ def memory_to_prompt_block(memory: dict[str, Any], *, limit: int = 20) -> str:
 
 
 def ensure_expect_asserts(flow_yaml: str, expect: list[str]) -> str:
-    """Append assertVisible lines for expect texts not already present."""
+    """Insert assertVisible lines for expect texts not already present.
+
+    Assertions go immediately before the final ``stopApp`` when present, so they
+    still run against the live UI.
+    """
     texts = [t.strip() for t in expect if t and str(t).strip()]
     if not texts:
         return flow_yaml
@@ -125,4 +129,8 @@ def ensure_expect_asserts(flow_yaml: str, expect: list[str]) -> str:
         return body
     if not body.endswith("\n"):
         body += "\n"
-    return body + "\n".join(additions) + "\n"
+    block = "\n".join(additions) + "\n"
+    stop = re.search(r"(?m)^- stopApp\s*$", body)
+    if stop:
+        return body[: stop.start()] + block + body[stop.start() :]
+    return body + block

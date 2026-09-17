@@ -3,28 +3,26 @@ name: E2E API hooks + WDIO Native Demo login
 env:
   API_BASE: https://reqres.in
   USER_NAME: MobiFlow E2E
-  LOGIN_EMAIL: bob@example.com
-  LOGIN_PASSWORD: s3cret
+  LOGIN_EMAIL: test@webdriver.io
+  LOGIN_PASSWORD: Test1234!
 onFlowStart:
-  - runScript: scripts/e2e_seed.js
+- runScript: scripts/e2e_seed.js
 onFlowComplete:
-  - runScript: scripts/e2e_teardown.js
+- runScript: scripts/e2e_teardown.js
 ---
 - launchApp
 - assertVisible: "Login|Forms|Home|Webview|Swipe"
 - tapOn: "Login"
 - tapOn:
-    id: "input-email"
-    optional: true
+    id: "RNE__Input__text-input"
+    index: 0
 - inputText: ${LOGIN_EMAIL}
 - tapOn:
-    id: "input-password"
-    optional: true
+    id: "RNE__Input__text-input"
+    index: 1
 - inputText: ${LOGIN_PASSWORD}
 - hideKeyboard
 - tapOn: "LOGIN"
-- assertVisible: "Success|Secret Area|You are logged in|Logout"
-- tapOn:
-    text: "OK|Logout"
-    optional: true
+- assertVisible: "Success"
+- tapOn: "OK"
 - stopApp

@@ -36,3 +36,7 @@ def test_ensure_expect_asserts():
     # idempotent
     out2 = ensure_expect_asserts(out, ["Search"])
     assert out2.count('assertVisible: "Search"') == 1
+
+    with_stop = "appId: x\n---\n- launchApp\n- stopApp\n"
+    placed = ensure_expect_asserts(with_stop, ["Login|Forms"])
+    assert placed.index('assertVisible: "Login|Forms"') < placed.index("- stopApp")

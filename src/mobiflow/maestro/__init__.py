@@ -75,10 +75,62 @@ def resolve_maestro_binary() -> str | None:
     which = shutil.which("maestro")
     if which:
         return which
-    home = Path.home() / ".maestro" / "bin" / "maestro"
-    if home.is_file() and os.access(home, os.X_OK):
-        return str(home)
+    home = Path.home() / ".maestro" / "bin"
+    names = (
+        ("maestro.cmd", "maestro.bat", "maestro.exe", "maestro")
+        if platform_system() == "Windows"
+        else ("maestro",)
+    )
+    for name in names:
+        path = home / name
+        if path.is_file():
+            return str(path)
     return None
+
+
+def maestro_global_args(
+    binary: str,
+    *,
+    device_id: str | None = None,
+    platform: str | None = None,
+) -> list[str]:
+    """``maestro [--device ID] [--platform android|ios|web] <subcommand> …``.
+
+    ``--device`` / ``--platform`` are parent flags. Passing them after ``test``
+    or ``record`` makes current Maestro CLI reject them as unknown options.
+    """
+    args = [binary]
+    if device_id:
+        args.extend(["--device", str(device_id)])
+    plat = (platform or "").strip().lower()
+    if plat in {"ios", "android", "web"}:
+        args.extend(["--platform", plat])
+    return args
+
+
+_CMD_META = frozenset(' \t&|<>^()%!')
+
+
+def _win_cmd_quote(arg: str) -> str:
+    """Quote an argv fragment so ``cmd.exe /c`` does not split on ``&`` / ``|``."""
+    if not arg:
+        return '""'
+    if not any(ch in arg for ch in _CMD_META):
+        return arg
+    return '"' + arg.replace('"', '""') + '"'
+
+
+def prepare_exec_args(args: list[str]) -> list[str]:
+    """On Windows, wrap ``.bat``/``.cmd`` so ``--env URL?a=1&limit=10`` survives."""
+    if not args:
+        return args
+    if os.name != "nt":
+        return args
+    suffix = Path(args[0]).suffix.lower()
+    if suffix not in {".bat", ".cmd"}:
+        return args
+    comspec = os.environ.get("COMSPEC") or "cmd.exe"
+    return [comspec, "/c", " ".join(_win_cmd_quote(a) for a in args)]
 
 
 def resolve_java_home() -> str | None:
@@ -149,14 +201,19 @@ async def _run_cmd(
     *,
     timeout: float = 120.0,
     cwd: str | None = None,
+    env: dict[str, str] | None = None,
 ) -> dict[str, Any]:
+    merged_env = _maestro_env()
+    if env:
+        merged_env.update(env)
+    exec_args = prepare_exec_args(args)
     try:
         proc = await asyncio.create_subprocess_exec(
-            *args,
+            *exec_args,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=cwd,
-            env=_maestro_env(),
+            env=merged_env,
         )
     except FileNotFoundError as e:
         return {
@@ -677,10 +734,11 @@ async def fetch_hierarchy(device_id: str | None = None) -> str:
     binary = resolve_maestro_binary()
     if not binary:
         return ""
-    args = [binary, "hierarchy"]
-    if device_id:
-        args.extend(["--device", device_id])
-    result = await _run_cmd(args, timeout=60.0)
+    extra_env: dict[str, str] | None = None
+    if device_id and device_id.startswith("emulator-"):
+        extra_env = {"ANDROID_SERIAL": device_id}
+    args = maestro_global_args(binary, device_id=device_id) + ["hierarchy"]
+    result = await _run_cmd(args, timeout=60.0, env=extra_env)
     return (result.get("stdout") or "")[:12000]
 
 
@@ -698,11 +756,8 @@ def _maestro_test_args(
 ) -> list[str]:
     from mobiflow.secrets import maestro_env_args
 
-    args = [binary, "test", str(flow_path)]
-    if device_id:
-        args.extend(["--device", device_id])
-    if platform and platform.lower() in {"ios", "android", "web"}:
-        args.extend(["--platform", platform.lower()])
+    args = maestro_global_args(binary, device_id=device_id, platform=platform)
+    args.extend(["test", str(flow_path)])
     if flow_env:
         args.extend(maestro_env_args(flow_env))
     if include_tags:
@@ -765,23 +820,19 @@ async def _maybe_record_video(
     videos = artifact_dir / "videos"
     videos.mkdir(parents=True, exist_ok=True)
     out_mp4 = videos / "execution.mp4"
-    args = [
-        binary,
-        "record",
-        str(flow_path),
-        "--local",
-        str(out_mp4),
-    ]
-    if device_id:
-        args.extend(["--device", device_id])
+    args = maestro_global_args(binary, device_id=device_id)
+    args.extend(["record", "--local", str(flow_path), str(out_mp4)])
     if flow_env:
         args.extend(maestro_env_args(flow_env))
     debug_dir = artifact_dir / "maestro-record-debug"
     debug_dir.mkdir(parents=True, exist_ok=True)
     args.extend(["--debug-output", str(debug_dir)])
+    extra_env: dict[str, str] | None = None
+    if device_id and device_id.startswith("emulator-"):
+        extra_env = {"ANDROID_SERIAL": device_id}
     if progress:
         progress("Recording execution video (`maestro record --local`)…")
-    result = await _run_cmd(args, timeout=timeout_s, cwd=str(cwd))
+    result = await _run_cmd(args, timeout=timeout_s, cwd=str(cwd), env=extra_env)
     if out_mp4.is_file() and out_mp4.stat().st_size > 0:
         return str(out_mp4.resolve())
     # Some CLI versions write beside cwd / debug dir
