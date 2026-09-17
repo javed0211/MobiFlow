@@ -8,6 +8,7 @@ from mobiflow.cloud.base import CloudProvider, is_cloud_provider, normalize_prov
 from mobiflow.config import DeviceConfig, RunConfig
 from mobiflow.maestro import (
     _maestro_test_args,
+    android_serial_env,
     find_local_videos,
     maestro_global_args,
     prepare_exec_args,
@@ -98,22 +99,34 @@ def test_maestro_global_args_before_subcommand():
 def test_prepare_exec_args_quotes_ampersand_on_windows(monkeypatch):
     monkeypatch.setattr("mobiflow.maestro.os.name", "nt")
     raw = [
-        r"C:\maestro\bin\maestro.bat",
+        r"C:\maestro\bin\maestro.cmd",
         "--device",
-        "emulator-5554",
+        "R58M123",
         "test",
         r"C:\Users\me\OneDrive - Capgemini\flow.yaml",
         "--env",
         "API_BASE=https://api.example.com/users?page=1&limit=10",
     ]
     wrapped = prepare_exec_args(raw)
-    assert wrapped[1] == "/c"
-    cmdline = wrapped[2]
-    assert "&limit=10" in cmdline
-    assert '"API_BASE=https://api.example.com/users?page=1&limit=10"' in cmdline
-    assert '"C:\\Users\\me\\OneDrive - Capgemini\\flow.yaml"' in cmdline
+    assert wrapped[1:4] == ["/d", "/S", "/C"]
+    # Each Maestro argv stays its own token so cmd.exe cannot drop --device
+    assert "--device" in wrapped
+    assert "R58M123" in wrapped
+    env = next(a for a in wrapped if a.startswith("API_BASE=") or "limit=10" in a)
+    assert "&limit=10" in env
+    assert env.startswith('"') and env.endswith('"')
+    flow = next(a for a in wrapped if "flow.yaml" in a)
+    assert "OneDrive - Capgemini" in flow
+    assert flow.startswith('"')
 
 
 def test_prepare_exec_args_noop_on_posix():
     raw = ["maestro", "test", "flow.yaml", "--env", "API_BASE=https://x?a=1&limit=10"]
     assert prepare_exec_args(raw) == raw
+
+
+def test_android_serial_env_pins_usb_and_emulator():
+    assert android_serial_env("R58M123") == {"ANDROID_SERIAL": "R58M123"}
+    assert android_serial_env("emulator-5554") == {"ANDROID_SERIAL": "emulator-5554"}
+    assert android_serial_env("8B9754B2-AD59-476F-924E-E243FAA609EB") is None
+    assert android_serial_env("") is None

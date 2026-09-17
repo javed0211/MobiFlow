@@ -121,16 +121,29 @@ def _win_cmd_quote(arg: str) -> str:
 
 
 def prepare_exec_args(args: list[str]) -> list[str]:
-    """On Windows, wrap ``.bat``/``.cmd`` so ``--env URL?a=1&limit=10`` survives."""
-    if not args:
-        return args
-    if os.name != "nt":
+    """On Windows, run ``.bat``/``.cmd`` via ``cmd /d /S /C`` so args survive.
+
+    Joining the whole command into one ``/c "…"`` string makes cmd.exe strip the
+    quotes and drop ``--device`` / the flow path — common with OneDrive paths
+    that contain spaces. Keep each argv separate after ``/C``.
+    """
+    if not args or os.name != "nt":
         return args
     suffix = Path(args[0]).suffix.lower()
-    if suffix not in {".bat", ".cmd"}:
+    if suffix not in {".bat", ".cmd", ""}:
         return args
     comspec = os.environ.get("COMSPEC") or "cmd.exe"
-    return [comspec, "/c", " ".join(_win_cmd_quote(a) for a in args)]
+    return [comspec, "/d", "/S", "/C"] + [_win_cmd_quote(a) for a in args]
+
+
+def android_serial_env(device_id: str | None) -> dict[str, str] | None:
+    """Pin Maestro's ADB client to this serial (USB phone or emulator)."""
+    did = (device_id or "").strip()
+    if not did:
+        return None
+    if infer_platform(did, "android") != "android":
+        return None
+    return {"ANDROID_SERIAL": did}
 
 
 def resolve_java_home() -> str | None:
@@ -734,11 +747,8 @@ async def fetch_hierarchy(device_id: str | None = None) -> str:
     binary = resolve_maestro_binary()
     if not binary:
         return ""
-    extra_env: dict[str, str] | None = None
-    if device_id and device_id.startswith("emulator-"):
-        extra_env = {"ANDROID_SERIAL": device_id}
     args = maestro_global_args(binary, device_id=device_id) + ["hierarchy"]
-    result = await _run_cmd(args, timeout=60.0, env=extra_env)
+    result = await _run_cmd(args, timeout=60.0, env=android_serial_env(device_id))
     return (result.get("stdout") or "")[:12000]
 
 
@@ -827,12 +837,11 @@ async def _maybe_record_video(
     debug_dir = artifact_dir / "maestro-record-debug"
     debug_dir.mkdir(parents=True, exist_ok=True)
     args.extend(["--debug-output", str(debug_dir)])
-    extra_env: dict[str, str] | None = None
-    if device_id and device_id.startswith("emulator-"):
-        extra_env = {"ANDROID_SERIAL": device_id}
     if progress:
         progress("Recording execution video (`maestro record --local`)…")
-    result = await _run_cmd(args, timeout=timeout_s, cwd=str(cwd), env=extra_env)
+    result = await _run_cmd(
+        args, timeout=timeout_s, cwd=str(cwd), env=android_serial_env(device_id)
+    )
     if out_mp4.is_file() and out_mp4.stat().st_size > 0:
         return str(out_mp4.resolve())
     # Some CLI versions write beside cwd / debug dir
@@ -972,7 +981,12 @@ async def run_flow_yaml(
         )
         if progress:
             progress(f"Running maestro test{' on ' + device_id if device_id else ''}…")
-        result = await _run_cmd(args, timeout=float(timeout_s), cwd=str(root))
+        result = await _run_cmd(
+            args,
+            timeout=float(timeout_s),
+            cwd=str(root),
+            env=android_serial_env(device_id),
+        )
         result["flow_yaml"] = flow_yaml
         result["scripts"] = scripts or {}
         if art is not None:

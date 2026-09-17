@@ -3,6 +3,7 @@ from mobiflow.devices import (
     _parse_simctl_all,
     host_capabilities,
     match_connected_device,
+    pick_preferred_device,
 )
 
 
@@ -35,6 +36,17 @@ def test_match_connected_device_serial_and_avd_name():
         == "emulator-5554"
     )
     assert match_connected_device("missing", connected) is None
+
+
+def test_pick_preferred_device_usb_over_emulator():
+    connected = _parse_adb_devices(
+        "List of devices attached\nemulator-5554\tdevice\nR58M123\tdevice\n"
+    )
+    pick = pick_preferred_device(connected, platform="android")
+    assert pick is not None
+    assert pick["id"] == "R58M123"
+    only_emu = [d for d in connected if d["id"].startswith("emulator-")]
+    assert pick_preferred_device(only_emu, platform="android")["id"] == "emulator-5554"
 
 
 def test_parse_simctl_all():

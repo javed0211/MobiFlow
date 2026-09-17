@@ -122,6 +122,31 @@ async def _run_cmd(
     }
 
 
+def pick_preferred_device(
+    connected: list[dict[str, str]],
+    *,
+    platform: str = "android",
+) -> dict[str, str] | None:
+    """Pick a live device. USB phones beat emulators when both are online."""
+    plat = (platform or "android").lower()
+    matches = [d for d in connected if (d.get("platform") or "").lower() == plat]
+    if plat == "android":
+        pool = matches or [d for d in connected if (d.get("platform") or "").lower() == "android"]
+        usb = [
+            d
+            for d in pool
+            if not str(d.get("id") or "").startswith("emulator-")
+        ]
+        if usb:
+            return usb[0]
+        if pool:
+            return pool[0]
+        return None
+    if matches:
+        return matches[0]
+    return connected[0] if connected else None
+
+
 def match_connected_device(
     device_id: str,
     connected: list[dict[str, str]],
@@ -579,7 +604,7 @@ async def ensure_device(
         # Stale serial / AVD label in config while an emulator is already up.
         android_online = [d for d in connected if d.get("platform") == "android"]
         if plat == "android" and android_online:
-            pick = android_online[0]
+            pick = pick_preferred_device(android_online, platform="android") or android_online[0]
             _p(
                 f"Requested device {device_id!r} not in adb list "
                 f"(have {[d.get('id') for d in android_online]}); "
@@ -587,16 +612,13 @@ async def ensure_device(
             )
             return {"ok": True, "device": pick, "started": False}
     else:
-        for d in connected:
-            if d.get("platform") == plat:
-                _p(f"Using connected {plat} device: {d.get('name')} ({d.get('id')})")
-                return {"ok": True, "device": d, "started": False}
-        if connected:
+        pick = pick_preferred_device(connected, platform=plat)
+        if pick:
             _p(
-                f"No {plat} device online — using {connected[0].get('platform')} "
-                f"{connected[0].get('name')}"
+                f"Using connected {pick.get('platform')} device: "
+                f"{pick.get('name')} ({pick.get('id')})"
             )
-            return {"ok": True, "device": connected[0], "started": False}
+            return {"ok": True, "device": pick, "started": False}
 
     if not auto_start:
         return {
