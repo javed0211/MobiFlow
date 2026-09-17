@@ -146,6 +146,63 @@ def _header_and_body(flow_yaml: str) -> tuple[str, str]:
     return text, ""
 
 
+def _load_header(flow_yaml: str) -> tuple[dict[str, Any], str]:
+    head, body = _header_and_body(flow_yaml)
+    try:
+        header = yaml.safe_load(head) if head.strip() else {}
+    except yaml.YAMLError:
+        header = {}
+    if not isinstance(header, dict):
+        header = {"appId": str(header)}
+    return header, body
+
+
+def _dump_flow(header: dict[str, Any], body: str) -> str:
+    ordered: dict[str, Any] = {}
+    for key in (
+        "appId",
+        "name",
+        "tags",
+        "env",
+        "onFlowStart",
+        "onFlowComplete",
+    ):
+        if key in header:
+            ordered[key] = header.pop(key)
+    ordered.update(header)
+    dumped = yaml.safe_dump(ordered, sort_keys=False, allow_unicode=True).rstrip()
+    body_out = body if body else "- launchApp\n"
+    if not body_out.startswith("\n") and not dumped.endswith("\n"):
+        dumped += "\n"
+    return f"{dumped}---\n{body_out.lstrip()}".rstrip() + "\n"
+
+
+def ensure_flow_env(flow_yaml: str, env: dict[str, str] | None) -> str:
+    """Write case/config env into the Maestro YAML ``env:`` header.
+
+    Codegen does not reliably copy ``env:`` from the case. Without it, a later
+    ``maestro test flows/<case>.yaml`` (no ``--env``) leaves ``${API_BASE}`` empty.
+    Case/config values win over keys already in the YAML.
+    """
+    clean = {
+        str(k).strip(): "" if v is None else str(v)
+        for k, v in (env or {}).items()
+        if str(k).strip()
+    }
+    if not clean:
+        return flow_yaml or ""
+    header, body = _load_header(flow_yaml)
+    existing = header.get("env")
+    merged: dict[str, str] = {}
+    if isinstance(existing, dict):
+        merged.update(
+            {str(k): "" if v is None else str(v) for k, v in existing.items()}
+        )
+    merged.update(clean)
+    header["env"] = merged
+    return _dump_flow(header, body)
+
+
 def apply_flow_hooks(
     flow_yaml: str,
     scripts: dict[str, str] | None,
@@ -164,13 +221,7 @@ def apply_flow_hooks(
     if not start_yaml and not complete_yaml:
         return flow_yaml, out_scripts
 
-    head, body = _header_and_body(flow_yaml)
-    try:
-        header = yaml.safe_load(head) if head.strip() else {}
-    except yaml.YAMLError:
-        header = {}
-    if not isinstance(header, dict):
-        header = {"appId": str(header)}
+    header, body = _load_header(flow_yaml)
 
     def _merge(key: str, extra_lines: list[str]) -> None:
         extra = [_command_to_obj(x) for x in extra_lines]
@@ -192,24 +243,7 @@ def apply_flow_hooks(
 
     _merge("onFlowStart", start_yaml)
     _merge("onFlowComplete", complete_yaml)
-
-    ordered: dict[str, Any] = {}
-    for key in (
-        "appId",
-        "name",
-        "tags",
-        "env",
-        "onFlowStart",
-        "onFlowComplete",
-    ):
-        if key in header:
-            ordered[key] = header.pop(key)
-    ordered.update(header)
-    dumped = yaml.safe_dump(ordered, sort_keys=False, allow_unicode=True).rstrip()
-    body_out = body if body else "- launchApp\n"
-    if not body_out.startswith("\n") and not dumped.endswith("\n"):
-        dumped += "\n"
-    return f"{dumped}---\n{body_out.lstrip()}".rstrip() + "\n", out_scripts
+    return _dump_flow(header, body), out_scripts
 
 
 def hooks_prompt_block(

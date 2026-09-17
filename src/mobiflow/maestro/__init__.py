@@ -1031,6 +1031,34 @@ async def run_flow_yaml(
         return await _run_local(Path(tmp), None)
 
 
+def _apply_case_overlays(
+    flow: str,
+    scripts: dict[str, str],
+    *,
+    expect: list[str] | None,
+    on_flow_start: list[str] | None,
+    on_flow_complete: list[str] | None,
+    flow_env: dict[str, str] | None,
+) -> tuple[str, dict[str, str]]:
+    """Stamp expect asserts, hooks, and case env onto generated/reused YAML."""
+    from mobiflow.hooks import apply_flow_hooks, ensure_flow_env
+    from mobiflow.selectors import ensure_expect_asserts
+
+    out_scripts = dict(scripts or {})
+    if expect:
+        flow = ensure_expect_asserts(flow, list(expect))
+    if on_flow_start or on_flow_complete:
+        flow, out_scripts = apply_flow_hooks(
+            flow,
+            out_scripts,
+            start_steps=list(on_flow_start or []),
+            complete_steps=list(on_flow_complete or []),
+        )
+    if flow_env:
+        flow = ensure_flow_env(flow, flow_env)
+    return flow, out_scripts
+
+
 async def run_mobile_task(
     goal: str,
     *,
@@ -1230,7 +1258,6 @@ async def run_mobile_task(
     codegen_usage = ChatUsage()
     max_retries = max(0, min(int(retries or 0), 10))
     from mobiflow.selectors import (
-        ensure_expect_asserts,
         load_selector_memory,
         memory_to_prompt_block,
         merge_selectors,
@@ -1402,17 +1429,14 @@ async def run_mobile_task(
         for rel, body in seeded_scripts.items():
             scripts.setdefault(rel, body)
 
-    if expect:
-        flow = ensure_expect_asserts(flow, list(expect))
-    if on_flow_start or on_flow_complete:
-        from mobiflow.hooks import apply_flow_hooks
-
-        flow, scripts = apply_flow_hooks(
-            flow,
-            scripts,
-            start_steps=list(on_flow_start or []),
-            complete_steps=list(on_flow_complete or []),
-        )
+    flow, scripts = _apply_case_overlays(
+        flow,
+        scripts,
+        expect=expect,
+        on_flow_start=on_flow_start,
+        on_flow_complete=on_flow_complete,
+        flow_env=flow_env,
+    )
     if scripts:
         _p(f"Maestro bundle ready ({len(scripts)} JS file(s)).")
     else:
@@ -1567,17 +1591,14 @@ async def run_mobile_task(
         flow = bundle.flow_yaml
         scripts = bundle.scripts
         codegen_usage = codegen_usage.merged(bundle.usage)
-        if expect:
-            flow = ensure_expect_asserts(flow, list(expect))
-        if on_flow_start or on_flow_complete:
-            from mobiflow.hooks import apply_flow_hooks
-
-            flow, scripts = apply_flow_hooks(
-                flow,
-                scripts,
-                start_steps=list(on_flow_start or []),
-                complete_steps=list(on_flow_complete or []),
-            )
+        flow, scripts = _apply_case_overlays(
+            flow,
+            scripts,
+            expect=expect,
+            on_flow_start=on_flow_start,
+            on_flow_complete=on_flow_complete,
+            flow_env=flow_env,
+        )
         result["flow_yaml"] = flow
         result["scripts"] = scripts
         result["codegen_usage"] = codegen_usage.to_dict()
