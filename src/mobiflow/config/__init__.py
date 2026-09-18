@@ -179,7 +179,7 @@ class RunConfig(BaseModel):
     timeout_s: int = 180  # maestro test timeout
     save_artifacts: bool = True
     # Local: run `maestro record --local` after test to capture MP4 (cloud labs use lab video)
-    video: bool = True
+    video: bool = False
     # Reporting: junit | html (comma-string or list). Empty / none disables.
     reports: list[str] = Field(default_factory=lambda: ["junit", "html"])
     report_dir: str = ".mobiflow/reports"  # relative to project path
@@ -433,7 +433,7 @@ def render_simple_config(config: MobiflowConfig) -> str:
         f"  explore_steps: {run.explore_steps}   # max live explore actions",
         f"  timeout_s: {run.timeout_s}",
         f"  save_artifacts: {str(run.save_artifacts).lower()}",
-        f"  video: {str(run.video).lower()}       # local: maestro record --local after test",
+        f"  video: {str(run.video).lower()}       # local: maestro record --local after a passing test",
         f"  reports: [{', '.join(run.reports) if run.reports else ''}]   # junit, html — empty disables",
         f"  report_dir: {run.report_dir}",
         f"  retries: {run.retries}       # re-run same YAML before heal (flake control)",

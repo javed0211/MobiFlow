@@ -56,7 +56,7 @@ run:
   explore_steps: 5             # max live explore actions
   timeout_s: 180
   save_artifacts: true
-  video: true                  # local: maestro record --local after test
+  video: false                 # local: maestro record --local after a passing test (re-runs the flow)
   reports: [junit, html]       # junit, html — set [] to disable
   report_dir: .mobiflow/reports
   retries: 0                   # re-run same YAML before heal (flake control)

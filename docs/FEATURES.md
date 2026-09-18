@@ -334,7 +334,7 @@ a successful pass the stamp is written for true append detection.
 
 Cloud runs download screenshots/video/logs into `.mobiflow/runs/.../cloud/` when
 APIs expose them (BrowserStack sessions; Maestro Cloud / TestMu best-effort).
-Local runs with `run.video: true` capture MP4 via `maestro record --local`.
+Local runs with `run.video: true` capture MP4 via `maestro record --local` **after a passing test** (record re-runs the flow).
 HTML reports link `video_url` and embed pulled screenshots.
 
 Selector memory persists under `.mobiflow/selectors/<appId>.json` and feeds
@@ -380,7 +380,7 @@ Under `.mobiflow/`:
 ```yaml
 run:
   save_artifacts: true
-  video: true                  # local: maestro record --local after test
+  video: false                 # local: maestro record --local after a passing test
   reports: [junit, html]       # or [] to disable
   report_dir: .mobiflow/reports
   include_tags: []             # maestro test --include-tags

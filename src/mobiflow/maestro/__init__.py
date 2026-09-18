@@ -114,7 +114,7 @@ _CMD_CARET = frozenset("&|<>^")
 def _win_cmd_escape(arg: str) -> str:
     """Neutralize cmd.exe metacharacters without wrapping the value in quotes.
 
-    ``create_subprocess_exec`` already quotes spaces via list2cmdline. If we
+    ``subprocess.run`` (via list2cmdline) already quotes spaces. If we
     also wrap ``C:\\OneDrive - Capgemini\\flow.yaml`` in quotes, those ``"``
     characters become part of the filename Maestro opens → File not found.
     """
@@ -250,67 +250,20 @@ async def _run_cmd(
     cwd: str | None = None,
     env: dict[str, str] | None = None,
 ) -> dict[str, Any]:
+    from mobiflow.devices import run_captured
+
     merged_env = _maestro_env()
     if env:
         merged_env.update(env)
     exec_args = prepare_exec_args(args)
-    proc = None
-    timed_out = False
-    stdout_b, stderr_b = b"", b""
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            *exec_args,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=cwd,
-            env=merged_env,
-        )
-    except FileNotFoundError as e:
-        return {
-            "ok": False,
-            "returncode": -1,
-            "stdout": "",
-            "stderr": str(e),
-            "error": "executable_not_found",
-        }
-    try:
-        stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-    except TimeoutError:
-        timed_out = True
-        try:
-            proc.kill()
-        except ProcessLookupError:
-            pass
-        try:
-            stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=5)
-        except Exception:  # noqa: BLE001 — drain pipes so the loop can close
-            stdout_b, stderr_b = b"", b""
-    finally:
-        # stdout/stderr are StreamReaders (no close()). Drain via communicate();
-        # only wait() if the process is still alive after a timeout kill.
-        if proc is not None and proc.returncode is None:
-            try:
-                await asyncio.wait_for(proc.wait(), timeout=1)
-            except Exception:  # noqa: BLE001
-                pass
-    stdout = (stdout_b or b"").decode("utf-8", errors="replace")
-    stderr = (stderr_b or b"").decode("utf-8", errors="replace")
-    if timed_out:
-        return {
-            "ok": False,
-            "returncode": -1,
-            "stdout": stdout,
-            "stderr": (stderr + f"\nTimed out after {timeout}s").strip(),
-            "error": "timeout",
-        }
-    code = proc.returncode if proc.returncode is not None else -1
-    return {
-        "ok": code == 0,
-        "returncode": code,
-        "stdout": stdout,
-        "stderr": stderr,
-        "error": None if code == 0 else "nonzero_exit",
-    }
+    # Thread + subprocess.run: Windows Proactor must not own Maestro pipes.
+    return await asyncio.to_thread(
+        run_captured,
+        exec_args,
+        timeout=timeout,
+        cwd=cwd,
+        env=merged_env,
+    )
 
 
 async def list_devices() -> list[dict[str, str]]:
@@ -406,7 +359,7 @@ def resolve_app_id(app_id: str, platform: str, goal: str = "") -> str:
     for key, mapping in _KNOWN_APP_IDS.items():
         if key in g:
             return mapping.get(plat) or mapping["android"]
-    return mapping_default(plat)
+    return ""
 
 
 def mapping_default(platform: str) -> str:
@@ -430,11 +383,13 @@ def looks_like_maestro_yaml(text: str) -> bool:
 
 def ensure_flow_yaml(yaml_text: str, app_id: str) -> str:
     text = (yaml_text or "").strip()
+    aid = (app_id or "").strip()
     if not text:
-        aid = app_id or "com.android.settings"
-        return f"appId: {aid}\nname: Generated mobile flow\n---\n- launchApp\n"
+        header = f"appId: {aid}\n" if aid else ""
+        return f"{header}name: Generated mobile flow\n---\n- launchApp\n"
     if not re.search(r"(?m)^appId:\s*", text):
-        aid = app_id or "com.android.settings"
+        if not aid:
+            return text
         if "---" in text:
             return f"appId: {aid}\n---\n" + text.split("---", 1)[-1].lstrip()
         return f"appId: {aid}\nname: Generated mobile flow\n---\n{text}"
@@ -459,6 +414,8 @@ Rules:
    takeScreenshot, setLocation, runFlow (subflows), runScript / evalScript (JS projects only).
 3) Prefer selectors from exploration results / view hierarchy when provided;
    else stable visible text / accessibility ids.
+   If the hierarchy is the Android launcher / iOS home screen, ignore it — do not
+   tap unrelated app icons. Launch the app named in the goal.
 4) When exploration results include a grounded plan, follow that plan closely.
 5) Reuse: extract repeated sequences into nested flows and call with runFlow.
    Use onFlowStart / onFlowComplete hooks for setup/teardown (including HTTP APIs
@@ -506,6 +463,8 @@ Rules:
      assertTrue is only for real JS expressions over output.* / env values.
 4) Prefer selectors from exploration results / view hierarchy when provided;
    else stable visible text / accessibility ids.
+   If the hierarchy is the Android launcher / iOS home screen, ignore it — do not
+   tap unrelated app icons. Launch the app named in the goal.
 5) When exploration results include a grounded plan, follow that plan closely.
 6) Reuse: extract repeated sequences with runFlow; use onFlowStart / onFlowComplete
    for setup/teardown when helpful.
@@ -664,7 +623,14 @@ async def generate_flow_bundle(
     llm_config = profile_to_llm_config(profile)
     user_parts = [
         f"Platform: {platform or 'android'}",
-        f"App ID: {resolved}",
+        (
+            f"App ID: {resolved}"
+            if resolved
+            else (
+                "App ID: (not specified). Set YAML appId to the app named in the goal. "
+                "Do NOT launch Settings or tap unrelated home-screen icons."
+            )
+        ),
         f"JavaScript enabled: {str(allow_js).lower()}",
         f"Goal:\n{goal}",
     ]
@@ -864,6 +830,11 @@ def find_local_videos(root: Path, *, limit: int = 8) -> list[Path]:
     return found
 
 
+def should_record_video(*, enabled: bool, test_ok: bool) -> bool:
+    """``maestro record`` re-runs the flow; only do that after a passing test."""
+    return bool(enabled and test_ok)
+
+
 async def _maybe_record_video(
     binary: str,
     flow_path: Path,
@@ -1052,7 +1023,7 @@ async def run_flow_yaml(
             result["maestro_debug_dir"] = str(art / "maestro-debug")
             result["maestro_output_dir"] = str(art / "maestro-output")
             video_path = ""
-            if record_video:
+            if should_record_video(enabled=record_video, test_ok=bool(result.get("ok"))):
                 video_path = await _maybe_record_video(
                     binary,
                     flow_path,
@@ -1063,6 +1034,8 @@ async def run_flow_yaml(
                     timeout_s=float(timeout_s),
                     progress=progress,
                 )
+            elif record_video and progress:
+                progress("Skipping video record (test did not pass).")
             if not video_path:
                 found = find_local_videos(art)
                 if found:
@@ -1463,6 +1436,7 @@ async def run_mobile_task(
         hierarchy = exploration.final_hierarchy or ""
         if (
             not hierarchy
+            and want_explore
             and live
             and adaptive
             and selected
@@ -1471,6 +1445,14 @@ async def run_mobile_task(
         ):
             _p("Fetching view hierarchy…")
             hierarchy = await fetch_hierarchy(selected)
+        elif (
+            not hierarchy
+            and live
+            and adaptive
+            and not want_explore
+            and not cloud
+        ):
+            _p("Skipping launcher hierarchy (explore is off) — codegen uses the case task.")
         elif cloud and adaptive and not exploration_prompt:
             _p("Skipping local hierarchy (cloud provider) — heal uses failure logs only.")
 

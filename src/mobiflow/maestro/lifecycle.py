@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import shutil
 from pathlib import Path
 from typing import Any
+
+from mobiflow.devices import run_captured
 
 logger = logging.getLogger(__name__)
 
@@ -87,8 +90,6 @@ async def install_app_local(
     timeout_s: float = 180.0,
 ) -> dict[str, Any]:
     """Install a local .apk / .aab / .ipa onto a device or simulator."""
-    import asyncio
-
     path = Path(app_path).expanduser().resolve()
     plat = (platform or "android").lower()
     suffix = path.suffix.lower()
@@ -113,31 +114,23 @@ async def install_app_local(
             args.extend(["-s", device_id])
         # -r: replace existing; -d: allow version downgrade (helpful in CI)
         args.extend(["install", "-r", "-d", str(path)])
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                *args,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            stdout_b, stderr_b = await asyncio.wait_for(
-                proc.communicate(), timeout=timeout_s
-            )
-        except TimeoutError:
+        captured = await asyncio.to_thread(run_captured, args, timeout=timeout_s)
+        if captured.get("error") == "timeout":
             return {
                 "ok": False,
                 "error": "install_timeout",
                 "message": f"adb install timed out after {timeout_s}s",
             }
-        stdout = (stdout_b or b"").decode("utf-8", errors="replace")
-        stderr = (stderr_b or b"").decode("utf-8", errors="replace")
-        ok = proc.returncode == 0 and "Success" in (stdout + stderr)
+        stdout = captured.get("stdout") or ""
+        stderr = captured.get("stderr") or ""
+        ok = bool(captured.get("ok")) and "Success" in (stdout + stderr)
         return {
             "ok": ok,
             "error": "" if ok else "install_failed",
             "message": "Installed via adb" if ok else (stderr or stdout or "adb install failed"),
             "stdout": stdout,
             "stderr": stderr,
-            "returncode": proc.returncode,
+            "returncode": captured.get("returncode"),
             "app_path": str(path),
         }
 
@@ -147,37 +140,29 @@ async def install_app_local(
         if is_ios_app_bundle:
             udid = device_id or "booted"
             args = ["xcrun", "simctl", "install", udid, str(path)]
-            try:
-                proc = await asyncio.create_subprocess_exec(
-                    *args,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                )
-                stdout_b, stderr_b = await asyncio.wait_for(
-                    proc.communicate(), timeout=timeout_s
-                )
-            except FileNotFoundError:
+            captured = await asyncio.to_thread(run_captured, args, timeout=timeout_s)
+            if captured.get("error") == "executable_not_found":
                 return {
                     "ok": False,
                     "error": "simctl_not_found",
                     "message": "xcrun simctl not found (macOS + Xcode required)",
                 }
-            except TimeoutError:
+            if captured.get("error") == "timeout":
                 return {
                     "ok": False,
                     "error": "install_timeout",
                     "message": f"simctl install timed out after {timeout_s}s",
                 }
-            stdout = (stdout_b or b"").decode("utf-8", errors="replace")
-            stderr = (stderr_b or b"").decode("utf-8", errors="replace")
-            ok = proc.returncode == 0
+            stdout = captured.get("stdout") or ""
+            stderr = captured.get("stderr") or ""
+            ok = bool(captured.get("ok"))
             return {
                 "ok": ok,
                 "error": "" if ok else "install_failed",
                 "message": "Installed via simctl" if ok else (stderr or stdout),
                 "stdout": stdout,
                 "stderr": stderr,
-                "returncode": proc.returncode,
+                "returncode": captured.get("returncode"),
                 "app_path": str(path),
             }
         return {

@@ -12,6 +12,7 @@ import os
 import platform
 import re
 import shutil
+import subprocess
 import time
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -74,19 +75,27 @@ def resolve_emulator() -> Optional[str]:
     return None
 
 
-async def _run_cmd(
+def run_captured(
     args: list[str],
     *,
     timeout: float = 60.0,
     cwd: Optional[str] = None,
+    env: Optional[dict[str, str]] = None,
 ) -> dict[str, Any]:
+    """Blocking captured subprocess.
+
+    Windows ``ProactorEventLoop`` leaves pipe transports alive after
+    ``asyncio.run()`` closes the loop, so ``BaseSubprocessTransport.__del__``
+    raises ``Event loop is closed`` / ``I/O operation on closed pipe``.
+    Sync ``subprocess.run`` never registers those transports.
+    """
     try:
-        proc = await asyncio.create_subprocess_exec(
-            *args,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+        completed = subprocess.run(
+            args,
+            capture_output=True,
+            timeout=timeout,
             cwd=cwd,
-            env=os.environ.copy(),
+            env=env,
         )
     except FileNotFoundError as e:
         return {
@@ -96,23 +105,20 @@ async def _run_cmd(
             "stderr": str(e),
             "error": "executable_not_found",
         }
-    try:
-        stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-    except asyncio.TimeoutError:
-        try:
-            proc.kill()
-        except ProcessLookupError:
-            pass
+    except subprocess.TimeoutExpired as e:
+        stdout = (e.stdout or b"").decode("utf-8", errors="replace")
+        stderr = (e.stderr or b"").decode("utf-8", errors="replace")
+        extra = f"Timed out after {timeout}s"
         return {
             "ok": False,
             "returncode": -1,
-            "stdout": "",
-            "stderr": f"Timed out after {timeout}s",
+            "stdout": stdout,
+            "stderr": f"{stderr}\n{extra}".strip() if stderr else extra,
             "error": "timeout",
         }
-    stdout = (stdout_b or b"").decode("utf-8", errors="replace")
-    stderr = (stderr_b or b"").decode("utf-8", errors="replace")
-    code = proc.returncode if proc.returncode is not None else -1
+    stdout = (completed.stdout or b"").decode("utf-8", errors="replace")
+    stderr = (completed.stderr or b"").decode("utf-8", errors="replace")
+    code = completed.returncode if completed.returncode is not None else -1
     return {
         "ok": code == 0,
         "returncode": code,
@@ -120,6 +126,21 @@ async def _run_cmd(
         "stderr": stderr,
         "error": None if code == 0 else "nonzero_exit",
     }
+
+
+async def _run_cmd(
+    args: list[str],
+    *,
+    timeout: float = 60.0,
+    cwd: Optional[str] = None,
+) -> dict[str, Any]:
+    return await asyncio.to_thread(
+        run_captured,
+        args,
+        timeout=timeout,
+        cwd=cwd,
+        env=os.environ.copy(),
+    )
 
 
 def pick_preferred_device(
@@ -408,28 +429,22 @@ async def start_android_avd(
         }
     if progress:
         progress(f"Starting Android AVD: {avd_name}")
-    # Launch detached so it keeps running
+    # Launch detached so it keeps running. Use Popen (not asyncio) so Windows
+    # Proactor does not own pipes that later __del__ after the loop closes.
     try:
         kwargs: dict[str, Any] = {
-            "stdout": asyncio.subprocess.DEVNULL,
-            "stderr": asyncio.subprocess.DEVNULL,
+            "stdout": subprocess.DEVNULL,
+            "stderr": subprocess.DEVNULL,
             "env": os.environ.copy(),
         }
         if IS_WIN:
-            # Don't inherit console; detach
-            kwargs["creationflags"] = getattr(subprocess_mod(), "DETACHED_PROCESS", 0) | getattr(
-                subprocess_mod(), "CREATE_NEW_PROCESS_GROUP", 0
+            kwargs["creationflags"] = (
+                subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
             )
         else:
             kwargs["start_new_session"] = True
-        await asyncio.create_subprocess_exec(
-            emu,
-            "-avd",
-            avd_name,
-            "-netdelay",
-            "none",
-            "-netspeed",
-            "full",
+        subprocess.Popen(
+            [emu, "-avd", avd_name, "-netdelay", "none", "-netspeed", "full"],
             **kwargs,
         )
     except Exception as e:  # noqa: BLE001
@@ -443,12 +458,6 @@ async def start_android_avd(
             "message": f"AVD {avd_name} started but did not become ready in {timeout_s}s",
         }
     return {"ok": True, "device": device, "avd": avd_name}
-
-
-def subprocess_mod():
-    import subprocess
-
-    return subprocess
 
 
 async def start_ios_simulator(

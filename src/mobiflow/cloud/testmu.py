@@ -279,41 +279,34 @@ async def run_testmu(
             str(he_path),
             "--no-track",
         ]
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                *args,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=str(root),
-                env=env,
-            )
-        except FileNotFoundError as e:
+        from mobiflow.devices import run_captured
+
+        captured = await asyncio.to_thread(
+            run_captured,
+            args,
+            timeout=float(request.timeout_s),
+            cwd=str(root),
+            env=env,
+        )
+        if captured.get("error") == "executable_not_found":
             return CloudRunResult(
                 ok=False,
                 provider="testmu",
                 error="hyperexecute_not_found",
-                stderr=str(e),
+                stderr=captured.get("stderr") or "",
             )
-
-        try:
-            stdout_b, stderr_b = await asyncio.wait_for(
-                proc.communicate(), timeout=float(request.timeout_s)
-            )
-        except TimeoutError:
-            try:
-                proc.kill()
-            except ProcessLookupError:
-                pass
+        if captured.get("error") == "timeout":
             return CloudRunResult(
                 ok=False,
                 provider="testmu",
                 error="timeout",
-                stderr=f"HyperExecute timed out after {request.timeout_s}s",
+                stderr=captured.get("stderr")
+                or f"HyperExecute timed out after {request.timeout_s}s",
             )
 
-        stdout = (stdout_b or b"").decode("utf-8", errors="replace")
-        stderr = (stderr_b or b"").decode("utf-8", errors="replace")
-        code = proc.returncode if proc.returncode is not None else -1
+        stdout = captured.get("stdout") or ""
+        stderr = captured.get("stderr") or ""
+        code = captured.get("returncode") if captured.get("returncode") is not None else -1
         ok = code == 0
         # Best-effort job / dashboard extraction
         build_id = ""

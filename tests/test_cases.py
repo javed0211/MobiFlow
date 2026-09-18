@@ -178,6 +178,8 @@ def test_maestro_yaml_helpers():
     assert resolve_app_id("", "android", "open wdio native demo") == "com.wdiodemoapp"
     assert resolve_app_id("", "android", "launch proverbial") == "com.lambdatest.proverbial"
     assert resolve_app_id("", "ios", "open testmu sample") == "com.lambdatest.proverbial"
+    assert resolve_app_id("", "android", "Open Go Grocery and sign in") == ""
+    assert resolve_app_id("", "android", "Hit GET /v1/users then open the grocery app") == ""
 
 
 def test_load_cloud_sample_cases():

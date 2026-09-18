@@ -50,20 +50,20 @@ def test_install_app_adb_success(tmp_path: Path):
     apk = tmp_path / "app.apk"
     apk.write_bytes(b"apk")
 
-    class FakeProc:
-        returncode = 0
-
-        async def communicate(self):
-            return b"Success\n", b""
-
-    async def fake_exec(*args, **kwargs):
+    def fake_captured(args, **kwargs):
         assert "install" in args
         assert str(apk) in args
-        return FakeProc()
+        return {
+            "ok": True,
+            "returncode": 0,
+            "stdout": "Success\n",
+            "stderr": "",
+            "error": None,
+        }
 
     with (
         patch("mobiflow.maestro.lifecycle.resolve_adb", return_value="/usr/bin/adb"),
-        patch("asyncio.create_subprocess_exec", side_effect=fake_exec),
+        patch("mobiflow.maestro.lifecycle.run_captured", side_effect=fake_captured),
     ):
         result = asyncio.run(
             install_app_local(apk, device_id="emulator-5554", platform="android")

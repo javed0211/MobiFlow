@@ -15,6 +15,7 @@ from mobiflow.maestro import (
     find_local_videos,
     maestro_global_args,
     prepare_exec_args,
+    should_record_video,
 )
 
 
@@ -35,6 +36,7 @@ def test_run_config_video_and_tags():
         maestro_config="/tmp/config.yaml",
     )
     assert r.video is False
+    assert RunConfig().video is False
     assert r.include_tags == ["smoke", "regression"]
     assert r.exclude_tags == ["wip"]
     assert r.maestro_config == "/tmp/config.yaml"
@@ -137,11 +139,28 @@ def test_android_serial_env_pins_usb_and_emulator():
     assert android_serial_env("") is None
 
 
-def test_run_cmd_does_not_close_streamreader():
-    """asyncio Process.stdout is a StreamReader — it has no close() (Windows crash)."""
+def test_should_record_video_only_after_pass():
+    assert should_record_video(enabled=True, test_ok=True) is True
+    assert should_record_video(enabled=True, test_ok=False) is False
+    assert should_record_video(enabled=False, test_ok=True) is False
+
+
+def test_run_cmd_uses_sync_subprocess():
+    """Maestro/adb must not use asyncio subprocess pipes (Windows Proactor leak)."""
     result = asyncio.run(
         _run_cmd([sys.executable, "-c", "import sys; sys.stdout.write('ok')"], timeout=20.0)
     )
     assert result["error"] != "executable_not_found"
     assert result["ok"] is True
     assert "ok" in (result.get("stdout") or "")
+
+
+def test_run_captured_timeout():
+    from mobiflow.devices import run_captured
+
+    result = run_captured(
+        [sys.executable, "-c", "import time; time.sleep(30)"],
+        timeout=0.3,
+    )
+    assert result["ok"] is False
+    assert result["error"] == "timeout"
