@@ -286,16 +286,13 @@ async def _run_cmd(
         except Exception:  # noqa: BLE001 — drain pipes so the loop can close
             stdout_b, stderr_b = b"", b""
     finally:
-        if proc is not None:
-            if proc.stdout:
-                proc.stdout.close()
-            if proc.stderr:
-                proc.stderr.close()
-            if proc.returncode is None:
-                try:
-                    await asyncio.wait_for(proc.wait(), timeout=1)
-                except Exception:  # noqa: BLE001
-                    pass
+        # stdout/stderr are StreamReaders (no close()). Drain via communicate();
+        # only wait() if the process is still alive after a timeout kill.
+        if proc is not None and proc.returncode is None:
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=1)
+            except Exception:  # noqa: BLE001
+                pass
     stdout = (stdout_b or b"").decode("utf-8", errors="replace")
     stderr = (stderr_b or b"").decode("utf-8", errors="replace")
     if timed_out:

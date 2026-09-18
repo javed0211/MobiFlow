@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
+import sys
 from pathlib import Path
 
 from mobiflow.cloud.base import CloudProvider, is_cloud_provider, normalize_provider
 from mobiflow.config import DeviceConfig, RunConfig
 from mobiflow.maestro import (
     _maestro_test_args,
+    _run_cmd,
     android_serial_env,
     find_local_videos,
     maestro_global_args,
@@ -132,3 +135,13 @@ def test_android_serial_env_pins_usb_and_emulator():
     assert android_serial_env("emulator-5554") == {"ANDROID_SERIAL": "emulator-5554"}
     assert android_serial_env("8B9754B2-AD59-476F-924E-E243FAA609EB") is None
     assert android_serial_env("") is None
+
+
+def test_run_cmd_does_not_close_streamreader():
+    """asyncio Process.stdout is a StreamReader — it has no close() (Windows crash)."""
+    result = asyncio.run(
+        _run_cmd([sys.executable, "-c", "import sys; sys.stdout.write('ok')"], timeout=20.0)
+    )
+    assert result["error"] != "executable_not_found"
+    assert result["ok"] is True
+    assert "ok" in (result.get("stdout") or "")
