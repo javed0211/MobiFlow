@@ -112,12 +112,14 @@ def test_prepare_exec_args_quotes_ampersand_on_windows(monkeypatch):
     # Each Maestro argv stays its own token so cmd.exe cannot drop --device
     assert "--device" in wrapped
     assert "R58M123" in wrapped
-    env = next(a for a in wrapped if a.startswith("API_BASE=") or "limit=10" in a)
-    assert "&limit=10" in env
-    assert env.startswith('"') and env.endswith('"')
+    env = next(a for a in wrapped if "limit=10" in a)
+    assert "^&limit=10" in env
+    assert not env.startswith('"')
     flow = next(a for a in wrapped if "flow.yaml" in a)
     assert "OneDrive - Capgemini" in flow
-    assert flow.startswith('"')
+    # Quotes must not be part of the path Maestro opens
+    assert not flow.startswith('"')
+    assert '"' not in flow
 
 
 def test_prepare_exec_args_noop_on_posix():

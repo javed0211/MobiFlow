@@ -108,24 +108,35 @@ def maestro_global_args(
     return args
 
 
-_CMD_META = frozenset(' \t&|<>^()%!')
+_CMD_CARET = frozenset("&|<>^")
 
 
-def _win_cmd_quote(arg: str) -> str:
-    """Quote an argv fragment so ``cmd.exe /c`` does not split on ``&`` / ``|``."""
+def _win_cmd_escape(arg: str) -> str:
+    """Neutralize cmd.exe metacharacters without wrapping the value in quotes.
+
+    ``create_subprocess_exec`` already quotes spaces via list2cmdline. If we
+    also wrap ``C:\\OneDrive - Capgemini\\flow.yaml`` in quotes, those ``"``
+    characters become part of the filename Maestro opens → File not found.
+    """
     if not arg:
-        return '""'
-    if not any(ch in arg for ch in _CMD_META):
         return arg
-    return '"' + arg.replace('"', '""') + '"'
+    out: list[str] = []
+    for ch in arg:
+        if ch == "%":
+            out.append("%%")
+        elif ch in _CMD_CARET:
+            out.append("^")
+            out.append(ch)
+        else:
+            out.append(ch)
+    return "".join(out)
 
 
 def prepare_exec_args(args: list[str]) -> list[str]:
-    """On Windows, run ``.bat``/``.cmd`` via ``cmd /d /S /C`` so args survive.
+    """On Windows, run ``.bat``/``.cmd`` via ``cmd /d /S /C``.
 
-    Joining the whole command into one ``/c "…"`` string makes cmd.exe strip the
-    quotes and drop ``--device`` / the flow path — common with OneDrive paths
-    that contain spaces. Keep each argv separate after ``/C``.
+    Keep each argv separate after ``/C`` (do not join into one quoted string).
+    Escape ``&`` / ``|`` with ``^`` so ``--env URL?a=1&limit=10`` survives.
     """
     if not args or os.name != "nt":
         return args
@@ -133,7 +144,7 @@ def prepare_exec_args(args: list[str]) -> list[str]:
     if suffix not in {".bat", ".cmd", ""}:
         return args
     comspec = os.environ.get("COMSPEC") or "cmd.exe"
-    return [comspec, "/d", "/S", "/C"] + [_win_cmd_quote(a) for a in args]
+    return [comspec, "/d", "/S", "/C"] + [_win_cmd_escape(a) for a in args]
 
 
 def android_serial_env(device_id: str | None) -> dict[str, str] | None:
@@ -157,17 +168,40 @@ def resolve_java_home() -> str | None:
     ):
         if Path(candidate).is_dir():
             return candidate
-    # Windows: JAVA_HOME usually set by installer; also check Program Files
-    if platform_system() == "Windows":
-        for base in (
-            Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "Java",
-            Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "Microsoft",
-            Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Eclipse Adoptium",
+    # java on PATH → …/bin/java(.exe) → JAVA_HOME is the parent of bin
+    java_exe = shutil.which("java") or shutil.which("java.exe")
+    if java_exe:
+        home = Path(java_exe).resolve().parent.parent
+        if home.is_dir() and (
+            (home / "release").is_file()
+            or (home / "lib").is_dir()
+            or (home / "bin" / "java").is_file()
+            or (home / "bin" / "java.exe").is_file()
         ):
+            return str(home)
+    # Windows installers (Temurin, Microsoft, Android Studio JBR)
+    if platform_system() == "Windows":
+        pf = Path(os.environ.get("ProgramFiles", r"C:\Program Files"))
+        pf86 = Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"))
+        local = Path(os.environ.get("LOCALAPPDATA", ""))
+        bases = [
+            pf / "Java",
+            pf / "Microsoft",
+            pf / "Eclipse Adoptium",
+            pf / "Android" / "Android Studio" / "jbr",
+            pf86 / "Java",
+            pf86 / "Eclipse Adoptium",
+            local / "Programs" / "Eclipse Adoptium",
+            local / "Programs" / "Android" / "Android Studio" / "jbr",
+        ]
+        for base in bases:
+            if not base:
+                continue
+            if (base / "bin" / "java.exe").is_file():
+                return str(base)
             if base.is_dir():
-                # pick first jdk-* / jre-* child
                 for child in sorted(base.glob("jdk*")) + sorted(base.glob("jre*")):
-                    if child.is_dir():
+                    if (child / "bin" / "java.exe").is_file():
                         return str(child)
     return jh
 
@@ -220,6 +254,9 @@ async def _run_cmd(
     if env:
         merged_env.update(env)
     exec_args = prepare_exec_args(args)
+    proc = None
+    timed_out = False
+    stdout_b, stderr_b = b"", b""
     try:
         proc = await asyncio.create_subprocess_exec(
             *exec_args,
@@ -239,19 +276,36 @@ async def _run_cmd(
     try:
         stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=timeout)
     except TimeoutError:
+        timed_out = True
         try:
             proc.kill()
         except ProcessLookupError:
             pass
+        try:
+            stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=5)
+        except Exception:  # noqa: BLE001 — drain pipes so the loop can close
+            stdout_b, stderr_b = b"", b""
+    finally:
+        if proc is not None:
+            if proc.stdout:
+                proc.stdout.close()
+            if proc.stderr:
+                proc.stderr.close()
+            if proc.returncode is None:
+                try:
+                    await asyncio.wait_for(proc.wait(), timeout=1)
+                except Exception:  # noqa: BLE001
+                    pass
+    stdout = (stdout_b or b"").decode("utf-8", errors="replace")
+    stderr = (stderr_b or b"").decode("utf-8", errors="replace")
+    if timed_out:
         return {
             "ok": False,
             "returncode": -1,
-            "stdout": "",
-            "stderr": f"Timed out after {timeout}s",
+            "stdout": stdout,
+            "stderr": (stderr + f"\nTimed out after {timeout}s").strip(),
             "error": "timeout",
         }
-    stdout = (stdout_b or b"").decode("utf-8", errors="replace")
-    stderr = (stderr_b or b"").decode("utf-8", errors="replace")
     code = proc.returncode if proc.returncode is not None else -1
     return {
         "ok": code == 0,
